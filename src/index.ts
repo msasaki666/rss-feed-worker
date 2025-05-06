@@ -15,6 +15,8 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+import { type Feed, parseFeed } from "htmlparser2";
+
 export default {
   async fetch(req) {
     const url = new URL(req.url);
@@ -32,11 +34,55 @@ export default {
     // publish to a Queue, query a D1 Database, and much more.
     //
     // We'll keep it simple and make an API call to a Cloudflare API:
-    const resp = await fetch("https://api.cloudflare.com/client/v4/ips");
-    const wasSuccessful = resp.ok ? "success" : "fail";
+    const res = await fetch("https://b.hatena.ne.jp/hotentry/it.rss");
+    const body = await res.text();
+    if (!res.ok) console.log({ status: res.status, body });
+    const nullableFeed = parseFeed(body);
+    if (!nullableFeed) console.log("feed is null");
+    const feed = nullableFeed as Feed;
+
+    console.log({
+      title: feed.title,
+      link: feed.link,
+      description: feed.description,
+      updated: feed.updated,
+      author: feed.author,
+      items: feed.items.length,
+      type: feed.type,
+    });
+    const items = [feed.items[0], feed.items[1]].map((item) => {
+      return {
+        id: item.id,
+        title: item.title,
+        link: item.link,
+        description: item.description,
+        pubDate: item.pubDate,
+      };
+    });
+
+    const discordWebhookUrl = env.DISCORD_WEBHOOK_URL;
+
+    for (const item of items) {
+      const webhookResult = await fetch(discordWebhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: [`**${item.title}**`, item.link]
+            .filter(Boolean)
+            .join("\n\n"),
+        }),
+      });
+      console.log({
+        status: webhookResult.status,
+        body: await webhookResult.text(),
+      });
+    }
 
     // You could store this result in KV, write to a D1 Database, or publish to a Queue.
     // In this template, we'll just log the result:
-    console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
+    console.log(`trigger fired at ${event.cron}}`);
+    // console.log(items);
   },
 } satisfies ExportedHandler<Env>;
