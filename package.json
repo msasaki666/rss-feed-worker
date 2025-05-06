@@ -1,16 +1,19 @@
 {
-	"name": "rss-feed-worker",
-	"version": "0.0.0",
-	"private": true,
-	"scripts": {
-		"deploy": "wrangler deploy",
-		"dev": "wrangler dev --test-scheduled",
-		"start": "wrangler dev --test-scheduled",
-		"cf-typegen": "wrangler types"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "1.9.4",
-		"typescript": "^5.5.2",
-		"wrangler": "^4.14.1"
-	}
+  "name": "rss-feed-worker",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --test-scheduled",
+    "start": "wrangler dev --test-scheduled",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "typescript": "^5.5.2",
+    "wrangler": "^4.14.1"
+  },
+  "dependencies": {
+    "htmlparser2": "github:fb55/htmlparser2#1e81e728e841313bd284a59370d3313e946e1007"
+  }
 }
