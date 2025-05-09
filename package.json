@@ -14,6 +14,7 @@
     "wrangler": "^4.14.1"
   },
   "dependencies": {
-    "htmlparser2": "github:fb55/htmlparser2#1e81e728e841313bd284a59370d3313e946e1007"
+    "htmlparser2": "github:fb55/htmlparser2#1e81e728e841313bd284a59370d3313e946e1007",
+    "p-retry": "github:sindresorhus/p-retry#0a288cc203d657eb20e317163ae21834b86ba1bb"
   }
 }
