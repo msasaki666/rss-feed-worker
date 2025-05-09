@@ -119,7 +119,7 @@ const handleScheduled = async (
     .filter((kv) => {
       return kv[1] === null;
     })
-    .map(([key]) => key[0]) as string[];
+    .map((kv) => kv[0]) as string[];
   console.log(`existingKeys(): ${existingKeys}`);
 
   const newItems = extractedItems.filter((item) => {
