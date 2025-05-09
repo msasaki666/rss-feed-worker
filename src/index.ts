@@ -109,17 +109,21 @@ const handleScheduled = async (
       }),
   );
 
-  const existingLinkHashMaps = await env.RSS_FEED_WORKER_KV.get(
+  const map = await env.RSS_FEED_WORKER_KV.get(
     extractedItems.map((item) => {
       return item.linkHash;
     }),
   );
-  console.log(
-    `existingLinkHashMaps.keys(): ${Array.from(existingLinkHashMaps.keys())}`,
-  );
+
+  const existingKeys = Array.from(map)
+    .filter((kv) => {
+      return kv[1] === null;
+    })
+    .map(([key]) => key[0]) as string[];
+  console.log(`existingKeys(): ${existingKeys}`);
 
   const newItems = extractedItems.filter((item) => {
-    return !existingLinkHashMaps.has(item.linkHash);
+    return !existingKeys.includes(item.linkHash);
   });
 
   console.log(`newItems: ${newItems.map((item) => item.linkHash)}`);
@@ -198,16 +202,19 @@ const handleScheduled = async (
   console.log(`trigger fired at ${event.cron}`);
 };
 
-let exportable: ExportedHandler<Env>;
+const exportable: ExportedHandler<Env> =
+  env.ENABLE_HTTP_REQUEST === "true"
+    ? {
+        fetch: handleFetch,
+        scheduled: handleScheduled,
+      }
+    : {
+        fetch: async (
+          req: Request<unknown, IncomingRequestCfProperties<unknown>>,
+        ) => {
+          return new Response("", { status: 200, statusText: "OK" });
+        },
+        scheduled: handleScheduled,
+      };
 
-if (env.ENABLE_HTTP_REQUEST === "true") {
-  exportable = {
-    fetch: handleFetch,
-    scheduled: handleScheduled,
-  };
-} else {
-  exportable = {
-    scheduled: handleScheduled,
-  };
-}
 export default exportable;
