@@ -117,7 +117,7 @@ const handleScheduled = async (
 
   const existingKeys = Array.from(map)
     .filter((kv) => {
-      return kv[1] === null;
+      return kv[1] !== null;
     })
     .map((kv) => kv[0]);
   console.log(`existingKeys(): ${existingKeys}`);
