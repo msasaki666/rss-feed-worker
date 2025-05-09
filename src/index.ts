@@ -15,6 +15,7 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+import { env } from "cloudflare:workers";
 import { type Feed, parseFeed } from "htmlparser2";
 import pRetry, { AbortError, type FailedAttemptError } from "p-retry";
 
@@ -46,151 +47,167 @@ interface DiscordRateLimitExceededErrorBody {
   code?: number;
 }
 
-export default {
-  async fetch(req) {
-    const url = new URL(req.url);
-    url.pathname = "/__scheduled";
-    url.searchParams.append("cron", "* * * * *");
-    return new Response(
-      `To test the scheduled handler, ensure you have used the "--test-scheduled" then try running "curl ${url.href}".`,
-    );
-  },
+const handleFetch = async (
+  req: Request<unknown, IncomingRequestCfProperties<unknown>>,
+) => {
+  const url = new URL(req.url);
+  url.pathname = "/__scheduled";
+  url.searchParams.append("cron", "* * * * *");
+  return new Response(
+    `To test the scheduled handler, ensure you have used the "--test-scheduled" then try running "curl ${url.href}".`,
+  );
+};
 
-  // The scheduled handler is invoked at the interval set in our wrangler.jsonc's
-  // [[triggers]] configuration.
-  async scheduled(event, env, ctx): Promise<void> {
-    // A Cron Trigger can make requests to other endpoints on the Internet,
-    // publish to a Queue, query a D1 Database, and much more.
-    //
-    // We'll keep it simple and make an API call to a Cloudflare API:
-    const res = await fetch("https://b.hatena.ne.jp/hotentry/it.rss");
-    const body = await res.text();
-    if (!res.ok) {
-      return console.log({ status: res.status, body });
-    }
-    const nullableFeed = parseFeed(body);
-    if (!nullableFeed) {
-      return console.log("feed is null");
-    }
-    const feed = nullableFeed as Feed;
+const handleScheduled = async (
+  event: ScheduledController,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<void> => {
+  // A Cron Trigger can make requests to other endpoints on the Internet,
+  // publish to a Queue, query a D1 Database, and much more.
+  //
+  // We'll keep it simple and make an API call to a Cloudflare API:
+  const res = await fetch("https://b.hatena.ne.jp/hotentry/it.rss");
+  const body = await res.text();
+  if (!res.ok) {
+    return console.log({ status: res.status, body });
+  }
+  const nullableFeed = parseFeed(body);
+  if (!nullableFeed) {
+    return console.log("feed is null");
+  }
+  const feed = nullableFeed as Feed;
 
-    console.log({
-      title: feed.title,
-      link: feed.link,
-      description: feed.description,
-      updated: feed.updated,
-      author: feed.author,
-      items: feed.items.length,
-      type: feed.type,
-    });
-    const extractedItems = await Promise.all(
-      feed.items
-        .filter((item) => {
-          return item.link && item.title;
-        })
-        .map(async (item) => {
-          const link = item.link as string;
-          const normalizedLink = new URL(link).toString();
-          const encodedLink = new TextEncoder().encode(normalizedLink);
-          const buffer = await crypto.subtle.digest("SHA-256", encodedLink);
-          const linkHash = Array.from(new Uint8Array(buffer))
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("");
-          return {
-            id: item.id,
-            title: item.title,
-            link,
-            linkHash,
-          };
-        }),
-    );
-
-    const existingLinkHashMaps = await env.RSS_FEED_WORKER_KV.get(
-      extractedItems.map((item) => {
-        return item.linkHash;
+  console.log({
+    title: feed.title,
+    link: feed.link,
+    description: feed.description,
+    updated: feed.updated,
+    author: feed.author,
+    items: feed.items.length,
+    type: feed.type,
+  });
+  const extractedItems = await Promise.all(
+    feed.items
+      .filter((item) => {
+        return item.link && item.title;
+      })
+      .map(async (item) => {
+        const link = item.link as string;
+        const normalizedLink = new URL(link).toString();
+        const encodedLink = new TextEncoder().encode(normalizedLink);
+        const buffer = await crypto.subtle.digest("SHA-256", encodedLink);
+        const linkHash = Array.from(new Uint8Array(buffer))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        return {
+          id: item.id,
+          title: item.title,
+          link,
+          linkHash,
+        };
       }),
-    );
-    console.log(
-      `existingLinkHashMaps.keys(): ${Array.from(existingLinkHashMaps.keys())}`,
-    );
+  );
 
-    const newItems = extractedItems.filter((item) => {
-      return !existingLinkHashMaps.has(item.linkHash);
-    });
+  const existingLinkHashMaps = await env.RSS_FEED_WORKER_KV.get(
+    extractedItems.map((item) => {
+      return item.linkHash;
+    }),
+  );
+  console.log(
+    `existingLinkHashMaps.keys(): ${Array.from(existingLinkHashMaps.keys())}`,
+  );
 
-    console.log(`newItems: ${newItems.map((item) => item.linkHash)}`);
+  const newItems = extractedItems.filter((item) => {
+    return !existingLinkHashMaps.has(item.linkHash);
+  });
 
-    const discordWebhookUrl = env.DISCORD_WEBHOOK_URL;
+  console.log(`newItems: ${newItems.map((item) => item.linkHash)}`);
 
-    for (const item of newItems) {
-      const requestDiscordWebhook = async () => {
-        const res = await fetch(discordWebhookUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            content: [`**${item.title}**`, item.link]
-              .filter(Boolean)
-              .join("\n\n"),
-          }),
-        });
+  const discordWebhookUrl = env.DISCORD_WEBHOOK_URL;
 
-        // Abort retrying if the resource doesn't exist
-        if (res.status === 404) {
-          throw new AbortError(res.statusText);
-        }
-        if (res.status === 429) {
-          const body = await res.json<DiscordRateLimitExceededErrorBody>();
-
-          throw new DiscordRateLimitExceededError(
-            body.message,
-            body.retry_after,
-            body.global,
-            body.code,
-          );
-        }
-        return res;
-      };
-
-      const shouldRetry = (error: FailedAttemptError) => {
-        if (error instanceof DiscordRateLimitExceededError) {
-          console.log(
-            `Discord rate limit exceeded. Retrying after ${error.retryAfter}s...`,
-          );
-          setTimeout(() => {
-            console.log("Retrying...");
-          }, error.retryAfter * 1000);
-          return true;
-        }
-        return false;
-      };
-
-      const webhookResult = await pRetry(requestDiscordWebhook, {
-        retries: 3,
-        shouldRetry,
+  for (const item of newItems) {
+    const requestDiscordWebhook = async () => {
+      const res = await fetch(discordWebhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: [`**${item.title}**`, item.link]
+            .filter(Boolean)
+            .join("\n\n"),
+        }),
       });
 
-      if (!webhookResult.ok) {
-        return console.log({
-          status: webhookResult.status,
-          body: await webhookResult.text(),
-        });
+      // Abort retrying if the resource doesn't exist
+      if (res.status === 404) {
+        throw new AbortError(res.statusText);
       }
+      if (res.status === 429) {
+        const body = await res.json<DiscordRateLimitExceededErrorBody>();
 
-      console.log(`Successfully sent message to Discord: ${item.title}`);
-      try {
-        await env.RSS_FEED_WORKER_KV.put(
-          item.linkHash,
-          JSON.stringify({
-            title: item.title,
-            link: item.link,
-          }),
+        throw new DiscordRateLimitExceededError(
+          body.message,
+          body.retry_after,
+          body.global,
+          body.code,
         );
-      } catch (error) {
-        console.error("Error storing item in KV:", error);
       }
+      return res;
+    };
+
+    const shouldRetry = (error: FailedAttemptError) => {
+      if (error instanceof DiscordRateLimitExceededError) {
+        console.log(
+          `Discord rate limit exceeded. Retrying after ${error.retryAfter}s...`,
+        );
+        setTimeout(() => {
+          console.log("Retrying...");
+        }, error.retryAfter * 1000);
+        return true;
+      }
+      return false;
+    };
+
+    const webhookResult = await pRetry(requestDiscordWebhook, {
+      retries: 3,
+      shouldRetry,
+    });
+
+    if (!webhookResult.ok) {
+      return console.log({
+        status: webhookResult.status,
+        body: await webhookResult.text(),
+      });
     }
-    console.log(`trigger fired at ${event.cron}`);
-  },
-} satisfies ExportedHandler<Env>;
+
+    console.log(`Successfully sent message to Discord: ${item.title}`);
+    try {
+      await env.RSS_FEED_WORKER_KV.put(
+        item.linkHash,
+        JSON.stringify({
+          title: item.title,
+          link: item.link,
+        }),
+      );
+    } catch (error) {
+      console.error("Error storing item in KV:", error);
+    }
+  }
+  console.log(`trigger fired at ${event.cron}`);
+};
+
+let exportable: ExportedHandler<Env>;
+
+if (env.ENABLE_HTTP_REQUEST === "true") {
+  exportable = {
+    fetch: handleFetch,
+    scheduled: handleScheduled,
+  };
+} else {
+  exportable = {
+    scheduled: handleScheduled,
+  };
+}
+export default exportable;
