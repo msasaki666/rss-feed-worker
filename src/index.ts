@@ -67,7 +67,19 @@ const handleScheduled = async (
   // publish to a Queue, query a D1 Database, and much more.
   //
   // We'll keep it simple and make an API call to a Cloudflare API:
-  const res = await fetch("https://b.hatena.ne.jp/hotentry/it.rss");
+
+  const requestHatenaHotentryIT = async () => {
+    const res = await fetch("https://b.hatena.ne.jp/hotentry/it.rss");
+
+    // Abort retrying if the resource doesn't exist
+    if (res.status === 404) {
+      throw new AbortError(res.statusText);
+    }
+    return res;
+  };
+  const res = await pRetry(requestHatenaHotentryIT, {
+    retries: 3,
+  });
   const body = await res.text();
   if (!res.ok) {
     return console.log({ status: res.status, body });
