@@ -194,6 +194,9 @@ const handleScheduled = async (
           title: item.title,
           link: item.link,
         }),
+        {
+          expirationTtl: 60 * 60 * 24 * 10, // 10日。保存容量の上限を越えないようにするため。
+        },
       );
     } catch (error) {
       console.error("Error storing item in KV:", error);
