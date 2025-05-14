@@ -19,6 +19,12 @@ import { env } from "cloudflare:workers";
 import { type Feed, parseFeed } from "htmlparser2";
 import pRetry, { AbortError, type FailedAttemptError } from "p-retry";
 
+interface TargetOption {
+  postTitle: string;
+  rssUrl: string;
+  discordWebhookUrl: string;
+}
+
 class DiscordRateLimitExceededError extends Error {
   retryAfter: number;
   global: boolean;
@@ -46,6 +52,24 @@ interface DiscordRateLimitExceededErrorBody {
   global: boolean;
   code?: number;
 }
+
+const targetOptions: TargetOption[] = [
+  {
+    postTitle: "はてなブックマーク IT",
+    rssUrl: "https://b.hatena.ne.jp/hotentry/it.rss",
+    discordWebhookUrl: env.DISCORD_WEBHOOK_URL_IT,
+  },
+  {
+    postTitle: "Science Portal",
+    rssUrl: "https://scienceportal.jst.go.jp/feed/rss.xml",
+    discordWebhookUrl: env.DISCORD_WEBHOOK_URL_SCIENCE,
+  },
+  {
+    postTitle: "WIRED Japan",
+    rssUrl: "https://wired.jp/feed/rss",
+    discordWebhookUrl: env.DISCORD_WEBHOOK_URL_SCIENCE,
+  },
+];
 
 const handleFetch = async (
   req: Request<unknown, IncomingRequestCfProperties<unknown>>,
@@ -140,7 +164,7 @@ const handleScheduled = async (
 
   console.log(`newItems: ${newItems.map((item) => item.linkHash)}`);
 
-  const discordWebhookUrl = env.DISCORD_WEBHOOK_URL;
+  const discordWebhookUrl = target.discordWebhookUrl;
 
   for (const item of newItems) {
     const requestDiscordWebhook = async () => {
@@ -150,7 +174,7 @@ const handleScheduled = async (
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          content: [`**${item.title}**`, item.link]
+          content: [`**${target.postTitle} | ${item.title}**`, item.link]
             .filter(Boolean)
             .join("\n\n"),
         }),
@@ -213,6 +237,22 @@ const handleScheduled = async (
     } catch (error) {
       console.error("Error storing item in KV:", error);
     }
+  }
+};
+
+const handleScheduled = async (
+  event: ScheduledController,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<void> => {
+  try {
+    await Promise.all(
+      targetOptions.map(async (target) => {
+        await confirmRss(target);
+      }),
+    );
+  } catch (error) {
+    return console.error(error);
   }
   console.log(`trigger fired at ${event.cron}`);
 };
