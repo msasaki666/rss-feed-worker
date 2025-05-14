@@ -82,18 +82,14 @@ const handleFetch = async (
   );
 };
 
-const handleScheduled = async (
-  event: ScheduledController,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<void> => {
+const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   // A Cron Trigger can make requests to other endpoints on the Internet,
   // publish to a Queue, query a D1 Database, and much more.
   //
   // We'll keep it simple and make an API call to a Cloudflare API:
 
   const requestHatenaHotentryIT = async () => {
-    const res = await fetch("https://b.hatena.ne.jp/hotentry/it.rss");
+    const res = await fetch(target.rssUrl);
 
     // Abort retrying if the resource doesn't exist
     if (res.status === 404) {
@@ -248,7 +244,7 @@ const handleScheduled = async (
   try {
     await Promise.all(
       targetOptions.map(async (target) => {
-        await confirmRss(target);
+        await confirmRss(target, env);
       }),
     );
   } catch (error) {
