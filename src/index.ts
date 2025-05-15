@@ -88,12 +88,8 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   //
   // We'll keep it simple and make an API call to a Cloudflare API:
 
-  const req = async () => {
-    const res = await fetch(target.rssUrl, {
-      headers: {
-        "user-agent": "undici", // Node.jsのデフォルトUA
-      },
-    });
+  const requestHatenaHotentryIT = async () => {
+    const res = await fetch(target.rssUrl);
 
     // Abort retrying if the resource doesn't exist
     if (res.status === 404) {
@@ -101,7 +97,7 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
     }
     return res;
   };
-  const res = await pRetry(req, {
+  const res = await pRetry(requestHatenaHotentryIT, {
     retries: 3,
   });
   const body = await res.text();
