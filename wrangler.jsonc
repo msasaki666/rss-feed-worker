@@ -9,7 +9,8 @@
   "compatibility_date": "2025-05-06",
   "compatibility_flags": [
     "nodejs_compat",
-    "enable_nodejs_http_modules"
+    // "enable_nodejs_http_modules",
+    // "experimental"
   ],
   "observability": {
     "enabled": true

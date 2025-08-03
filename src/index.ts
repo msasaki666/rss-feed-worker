@@ -18,7 +18,7 @@
 import { env } from "cloudflare:workers";
 import { type Feed, parseFeed } from "htmlparser2";
 import pRetry, { AbortError, type FailedAttemptError } from "p-retry";
-import { get } from "node:https";
+// import { get } from "node:https";
 
 interface TargetOption {
   postTitle: string;
@@ -60,11 +60,11 @@ const targetOptions: TargetOption[] = [
     rssUrl: "https://b.hatena.ne.jp/hotentry/it.rss",
     discordWebhookUrl: env.DISCORD_WEBHOOK_URL_IT,
   },
-  {
-    postTitle: "Science Portal",
-    rssUrl: "https://scienceportal.jst.go.jp/feed/rss.xml",
-    discordWebhookUrl: env.DISCORD_WEBHOOK_URL_SCIENCE,
-  },
+  // {
+  //   postTitle: "Science Portal",
+  //   rssUrl: "https://scienceportal.jst.go.jp/feed/rss.xml",
+  //   discordWebhookUrl: env.DISCORD_WEBHOOK_URL_SCIENCE,
+  // },
   {
     postTitle: "WIRED Japan",
     rssUrl: "https://wired.jp/feed/rss",
@@ -90,21 +90,24 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   // We'll keep it simple and make an API call to a Cloudflare API:
 
   const requestFeedUrl = async () => {
+    // const fetchUrl = (url: string) => {
+    //   return new Promise<Response>((resolve, reject) => {
+    //     get(url, (r) => {
+    //       let data = "";
+    //       r.setEncoding("utf8");
+    //       r.on("data", (chunk) => {
+    //         data += chunk;
+    //       });
+    //       r.on("error", reject);
+    //       r.on("end", () => {
+    //         resolve(new Response(data));
+    //       });
+    //     }).on("error", reject);
+    //   });
+    // };
     const fetchUrl = (url: string) => {
-      return new Promise<Response>((resolve, reject) => {
-        get(url, (r) => {
-          let data = "";
-          r.setEncoding("utf8");
-          r.on("data", (chunk) => {
-            data += chunk;
-          });
-          r.on("error", reject);
-          r.on("end", () => {
-            resolve(new Response(data));
-          });
-        }).on("error", reject);
-      });
-    };
+      return fetch(url);
+    }
     const res = await fetchUrl(target.rssUrl);
     if (!res.ok) {
       throw new AbortError(`Failed to fetch RSS feed: ${target.rssUrl}`);
