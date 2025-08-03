@@ -88,8 +88,11 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   //
   // We'll keep it simple and make an API call to a Cloudflare API:
 
-  const requestHatenaHotentryIT = async () => {
-    const res = await fetch(target.rssUrl);
+  const requestFeedUrl = async () => {
+    const res = await fetch(target.rssUrl, {
+      // https://developers.cloudflare.com/rules/snippets/examples/follow-redirects/
+      redirect: "follow", // Ensure fetch follows redirects automatically. Each subrequest in a redirect chain counts against the subrequest limit.
+    });
 
     // Abort retrying if the resource doesn't exist
     if (res.status === 404) {
@@ -97,7 +100,7 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
     }
     return res;
   };
-  const res = await pRetry(requestHatenaHotentryIT, {
+  const res = await pRetry(requestFeedUrl, {
     retries: 3,
   });
   const body = await res.text();
