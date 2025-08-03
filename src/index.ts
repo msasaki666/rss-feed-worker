@@ -90,7 +90,7 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   // We'll keep it simple and make an API call to a Cloudflare API:
 
   const requestFeedUrl = async () => {
-    const fetch = (url: string) => {
+    const fetchUrl = (url: string) => {
       return new Promise<Response>((resolve, reject) => {
         get(url, (r) => {
           let data = "";
@@ -105,7 +105,7 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
         }).on("error", reject);
       });
     };
-    const res = await fetch(target.rssUrl);
+    const res = await fetchUrl(target.rssUrl);
     if (!res.ok) {
       throw new AbortError(`Failed to fetch RSS feed: ${target.rssUrl}`);
     }
