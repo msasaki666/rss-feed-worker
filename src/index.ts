@@ -98,11 +98,17 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
           r.on("data", (chunk) => {
             data += chunk;
           });
-          r.on("error", reject);
+          r.on("error", (err) => {
+            console.error(`Error fetching RSS feed: ${err.message}`);
+            reject(err);
+          });
           r.on("end", () => {
             resolve(new Response(data));
           });
-        }).on("error", reject);
+        }).on("error", (err) => {
+          console.error(`Error fetching RSS feed: ${err.message}`);
+          reject(err);
+        });
       });
     };
     const res = await fetchUrl(target.rssUrl);
@@ -121,7 +127,7 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   }
   const nullableFeed = parseFeed(body);
   if (!nullableFeed) {
-    return console.log("feed is null");
+    return console.log(`${target.postTitle} feed is null`);
   }
   const feed = nullableFeed as Feed;
 
