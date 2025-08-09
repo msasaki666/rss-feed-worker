@@ -119,20 +119,9 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   if (!res.ok) {
     return console.log({ status: res.status, body });
   }
-
-  // Science Portal用のデバッグログを追加
-  if (target.postTitle === "Science Portal") {
-    console.log(`Science Portal RSS response length: ${body.length}`);
-    console.log(`Science Portal RSS response preview: ${body.substring(0, 200)}`);
-  }
-
   const nullableFeed = parseFeed(body);
   if (!nullableFeed) {
-    console.log(`feed is null for ${target.postTitle}`);
-    if (target.postTitle === "Science Portal") {
-      console.log(`Science Portal full response: ${body}`);
-    }
-    return;
+    return console.log("feed is null");
   }
   const feed = nullableFeed as Feed;
 
