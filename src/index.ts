@@ -18,7 +18,7 @@
 import { env } from "cloudflare:workers";
 import { type Feed, parseFeed } from "htmlparser2";
 import pRetry, { AbortError, type FailedAttemptError } from "p-retry";
-import { get } from "node:https";
+import fetch from "node-fetch";
 
 interface TargetOption {
   postTitle: string;
@@ -90,44 +90,30 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   // We'll keep it simple and make an API call to a Cloudflare API:
 
   const requestFeedUrl = async () => {
-    const fetchUrl = (url: string) => {
-      return new Promise<Response>((resolve, reject) => {
-        get(url, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/rss+xml, application/xml, text/xml, */*",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Upgrade-Insecure-Requests": "1"
-          }
-        }, (r) => {
-          let data = "";
-          r.setEncoding("utf8");
-          r.on("data", (chunk) => {
-            data += chunk;
-          });
-          r.on("error", (err) => {
-            console.error(`Error fetching RSS feed: ${err.message}`);
-            reject(err);
-          });
-          r.on("end", () => {
-            resolve(new Response(data));
-          });
-        }).on("error", (err) => {
-          console.error(`Error fetching RSS feed: ${err.message}`);
-          reject(err);
-        });
-      });
-    };
-    const res = await fetchUrl(target.rssUrl);
+    const res = await fetch(target.rssUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1"
+      },
+      redirect: "follow"
+    });
+
     if (!res.ok) {
-      throw new AbortError(`Failed to fetch RSS feed: ${target.rssUrl}`);
+      throw new AbortError(`Failed to fetch RSS feed: ${target.rssUrl} (Status: ${res.status})`);
     }
 
-    return res;
+    const body = await res.text();
+    return new Response(body, {
+      status: res.status,
+      statusText: res.statusText
+    });
   };
   const res = await pRetry(requestFeedUrl, {
     retries: 3,
@@ -136,18 +122,18 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   if (!res.ok) {
     return console.log({ target: target.postTitle, status: res.status, body });
   }
-  
+
   // レスポンス内容をログ出力（デバッグ用）
   console.log(`${target.postTitle} RSS response length: ${body.length}`);
   console.log(`${target.postTitle} RSS response preview: ${body.substring(0, 300)}`);
-  
+
   // HTMLエラーページが返されている場合を検出
   if (body.includes("error code:") || body.includes("<html") || body.includes("<!DOCTYPE")) {
     console.error(`${target.postTitle} received HTML error page instead of RSS feed`);
     console.error(`Full response: ${body}`);
     return;
   }
-  
+
   const nullableFeed = parseFeed(body);
   if (!nullableFeed) {
     console.log(`${target.postTitle} feed parsing failed`);
