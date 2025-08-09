@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "htmlparser2": "^10.0.0",
-    "node-fetch": "^3.3.2",
-    "p-retry": "^6.2.1"
+    "p-retry": "^6.2.1",
+    "undici": "^7.13.0"
   }
 }
