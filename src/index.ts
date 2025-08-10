@@ -18,7 +18,6 @@
 import { env } from "cloudflare:workers";
 import { type Feed, parseFeed } from "htmlparser2";
 import pRetry, { AbortError, type FailedAttemptError } from "p-retry";
-import { get } from "node:https";
 
 interface TargetOption {
   postTitle: string;
@@ -90,37 +89,13 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   // We'll keep it simple and make an API call to a Cloudflare API:
 
   const requestFeedUrl = async () => {
-    const fetchUrl = (url: string) => {
-      return new Promise<Response>((resolve, reject) => {
-        get(url, {
-          headers: {
-            "User-Agent": "undici", // Node.jsのデフォルトUA
-            "Accept": "*/*",
-          }
-        }, (r) => {
-          let data = "";
-          r.setEncoding("utf8");
-          r.on("data", (chunk) => {
-            data += chunk;
-          });
-          r.on("error", (err) => {
-            console.error(`Error fetching RSS feed: ${err.message}`);
-            reject(err);
-          });
-          r.on("end", () => {
-            resolve(new Response(data));
-          });
-        }).on("error", (err) => {
-          console.error(`Error fetching RSS feed: ${err.message}`);
-          reject(err);
-        });
-      });
-    };
-    const res = await fetchUrl(target.rssUrl);
-    if (!res.ok) {
-      throw new AbortError(`Failed to fetch RSS feed: ${target.rssUrl}`);
-    }
+    const res = await fetch(target.rssUrl);
 
+    // Abort retrying if the resource doesn't exist
+    if (res.status === 404) {
+      throw new AbortError(res.statusText);
+
+    };
     return res;
   };
   const res = await pRetry(requestFeedUrl, {
