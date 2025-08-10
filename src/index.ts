@@ -94,14 +94,8 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
       return new Promise<Response>((resolve, reject) => {
         get(url, {
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/rss+xml, application/xml, text/xml, */*",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Upgrade-Insecure-Requests": "1"
+            "User-Agent": "undici", // Node.jsのデフォルトUA
+            "Accept": "*/*",
           }
         }, (r) => {
           let data = "";
@@ -136,18 +130,18 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   if (!res.ok) {
     return console.log({ target: target.postTitle, status: res.status, body });
   }
-  
+
   // レスポンス内容をログ出力（デバッグ用）
   console.log(`${target.postTitle} RSS response length: ${body.length}`);
   console.log(`${target.postTitle} RSS response preview: ${body.substring(0, 300)}`);
-  
+
   // HTMLエラーページが返されている場合を検出
   if (body.includes("error code:") || body.includes("<html") || body.includes("<!DOCTYPE")) {
     console.error(`${target.postTitle} received HTML error page instead of RSS feed`);
     console.error(`Full response: ${body}`);
     return;
   }
-  
+
   const nullableFeed = parseFeed(body);
   if (!nullableFeed) {
     console.log(`${target.postTitle} feed parsing failed`);
