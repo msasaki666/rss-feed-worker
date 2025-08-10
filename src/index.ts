@@ -55,15 +55,15 @@ interface DiscordRateLimitExceededErrorBody {
 
 const targetOptions: TargetOption[] = [
   {
-    postTitle: "はてなブックマーク IT",
+    postTitle: "はてブ IT",
     rssUrl: "https://b.hatena.ne.jp/hotentry/it.rss",
     discordWebhookUrl: env.DISCORD_WEBHOOK_URL_IT,
   },
-  {
-    postTitle: "Science Portal",
-    rssUrl: "https://scienceportal.jst.go.jp/feed/rss.xml",
-    discordWebhookUrl: env.DISCORD_WEBHOOK_URL_SCIENCE,
-  },
+  // {
+  //   postTitle: "Science Portal",
+  //   rssUrl: "https://scienceportal.jst.go.jp/feed/rss.xml",
+  //   discordWebhookUrl: env.DISCORD_WEBHOOK_URL_SCIENCE,
+  // },
   {
     postTitle: "WIRED Japan",
     rssUrl: "https://wired.jp/feed/rss",
@@ -104,17 +104,6 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   const body = await res.text();
   if (!res.ok) {
     return console.log({ target: target.postTitle, status: res.status, body });
-  }
-
-  // レスポンス内容をログ出力（デバッグ用）
-  console.log(`${target.postTitle} RSS response length: ${body.length}`);
-  console.log(`${target.postTitle} RSS response preview: ${body.substring(0, 300)}`);
-
-  // HTMLエラーページが返されている場合を検出
-  if (body.includes("error code:") || body.includes("<html") || body.includes("<!DOCTYPE")) {
-    console.error(`${target.postTitle} received HTML error page instead of RSS feed`);
-    console.error(`Full response: ${body}`);
-    return;
   }
 
   const nullableFeed = parseFeed(body);
