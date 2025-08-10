@@ -18,7 +18,7 @@
 import { env } from "cloudflare:workers";
 import { type Feed, parseFeed } from "htmlparser2";
 import pRetry, { AbortError, type FailedAttemptError } from "p-retry";
-import { https } from "follow-redirects";
+import { get } from "node:https";
 
 interface TargetOption {
   postTitle: string;
@@ -92,7 +92,7 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
   const requestFeedUrl = async () => {
     const fetchUrl = (url: string) => {
       return new Promise<Response>((resolve, reject) => {
-        https.get(url, {
+        get(url, {
           headers: {
             "User-Agent": "undici", // Node.jsのデフォルトUA
             "Accept": "*/*",
