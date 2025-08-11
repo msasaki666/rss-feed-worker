@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Feed } from "htmlparser2";
 import { describe, expect, it, vi } from "vitest";
-import { extractItems, parseFeedSafely } from "./rss";
+import { extractItems, parseFeedSafely } from "../src/rss";
 
 const sampleFeed = `<?xml version="1.0"?>
 <rss><channel>

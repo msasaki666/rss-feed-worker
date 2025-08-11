@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mockRequestDiscordWebhook } from "./mock";
+import { mockRequestDiscordWebhook } from "../src/mock";
 
 // Unit test for mockRequestDiscordWebhook
 

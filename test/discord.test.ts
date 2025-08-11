@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { sendDiscordWebhook } from "./discord";
+import { sendDiscordWebhook } from "../src/discord";
 
 describe("sendDiscordWebhook", () => {
   it("retries on 429 and succeeds", async () => {
