@@ -94,8 +94,7 @@ const confirmRss = async (target: TargetOption, env: Env): Promise<void> => {
     // Abort retrying if the resource doesn't exist
     if (res.status === 404) {
       throw new AbortError(res.statusText);
-
-    };
+    }
     return res;
   };
   const res = await pRetry(requestFeedUrl, {
