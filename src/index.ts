@@ -126,7 +126,7 @@ const processFeed = async (target: TargetOption, env: Env): Promise<void> => {
 const handleScheduled = async (
   event: ScheduledController,
   env: Env,
-  ctx: ExecutionContext,
+  _ctx: ExecutionContext,
 ): Promise<void> => {
   try {
     await Promise.all(
@@ -148,7 +148,7 @@ const exportable: ExportedHandler<Env> =
       }
     : {
         fetch: async (
-          req: Request<unknown, IncomingRequestCfProperties<unknown>>,
+          _req: Request<unknown, IncomingRequestCfProperties<unknown>>,
         ) => {
           return new Response("", { status: 200, statusText: "OK" });
         },
