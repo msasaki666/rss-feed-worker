@@ -15,7 +15,7 @@
     "tsx": "^4.20.3",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
-    "wrangler": "^4.14.1"
+    "wrangler": "^4.28.1"
   },
   "dependencies": {
     "htmlparser2": "^10.0.0",
