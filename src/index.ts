@@ -54,7 +54,10 @@ const handleFetch = async (
   );
 };
 
-const processFeed = async (target: TargetOption, env: Env): Promise<void> => {
+export const processFeed = async (
+  target: TargetOption,
+  env: Env,
+): Promise<void> => {
   const res = await fetchFeed(target.rssUrl);
   const body = await res.text();
   if (!res.ok) {
@@ -86,6 +89,24 @@ const processFeed = async (target: TargetOption, env: Env): Promise<void> => {
   });
 
   console.log(`newItems: ${newItems.map((item) => item.linkHash)}`);
+
+  if (newItems.length === 0) {
+    return;
+  }
+
+  const listContent = newItems.map((item) => item.link).join("\n");
+  if (env.DISCORD_WEBHOOK_URL_NOTEBOOKLM) {
+    const listWebhookResult = await sendDiscordWebhook(
+      env.DISCORD_WEBHOOK_URL_NOTEBOOKLM,
+      listContent,
+    );
+    if (!listWebhookResult.ok) {
+      console.log({
+        status: listWebhookResult.status,
+        body: await listWebhookResult.text(),
+      });
+    }
+  }
 
   for (const item of newItems) {
     const content = [`**${target.postTitle} | ${item.title}**`, item.link]
