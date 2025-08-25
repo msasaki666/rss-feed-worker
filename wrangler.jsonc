@@ -11,7 +11,7 @@
     "enabled": true
   },
   "triggers": {
-    "crons": ["0 23,3,7 * * *"] // 毎日8時、12時、16時に実行
+    "crons": ["0 23 * * *"] // 毎日8時に実行
   },
   "kv_namespaces": [
     {
