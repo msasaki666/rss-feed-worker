@@ -1,10 +1,10 @@
 # RSS Feed Worker
 
-Cloudflare Workers を使って複数の RSS フィードを監視し、新着記事を Discord Webhook に通知するサービスです。Cron トリガーで定期的に起動し、KV ストレージに既読 URL を保存することで重複投稿を防ぎます。
+Cloudflare Workers を使って複数の RSS フィードを監視し、新着記事の URL 一覧を Discord Webhook に通知するサービスです。Cron トリガーで定期的に起動し、KV ストレージに既読 URL を保存することで重複投稿を防ぎます。
 
 ## 機能概要
 - JST 8:00 / 12:00 / 16:00 の Cron で実行
-- RSS 取得 → 未処理記事の抽出 → Discord 送信 → KV 保存の一連処理
+- RSS 取得 → 未処理記事の抽出 → Discord へ個別通知・URL 一覧送信 → KV 保存の一連処理
 - URL を SHA-256 でハッシュ化して既読判定
 - HTTP エンドポイントは環境変数 `ENABLE_HTTP_REQUEST` で有効化
 
@@ -19,6 +19,7 @@ Cloudflare Workers を使って複数の RSS フィードを監視し、新着�
 
 ## 必要な環境変数
 - Discord Webhook URL (IT 用・Science 用)
+- URL 一覧を送る Discord Webhook URL (例: NotebookLM 用)
 - `ENABLE_HTTP_REQUEST`: HTTP エンドポイントの有効化フラグ
 
 これらは wrangler の secret として設定してください。
