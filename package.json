@@ -18,6 +18,7 @@
     "wrangler": "^4.30.0"
   },
   "dependencies": {
+    "@effect/platform": "^0.90.9",
     "effect": "^3.17.13",
     "htmlparser2": "^10.0.0",
     "p-retry": "^6.2.1"
