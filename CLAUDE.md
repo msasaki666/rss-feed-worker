@@ -32,6 +32,8 @@ This is a Cloudflare Worker that monitors RSS feeds and sends new articles to Di
 - **htmlparser2**: RSS feed parsing
 - **p-retry**: Retry logic with custom error handling for Discord rate limits
 - **node:https**: HTTP requests (requires `nodejs_compat` flag)
+- **effect**: Effect-TS functional programming library (v3.17.13)
+- **@effect/platform**: HTTP client and platform abstractions (v0.90.9)
 
 ### Cloudflare Integrations
 
@@ -56,9 +58,36 @@ Required environment variables (set via `wrangler secret`):
 - `DISCORD_WEBHOOK_URL_SCIENCE` - Discord webhook for science news  
 - `ENABLE_HTTP_REQUEST` - Feature flag to enable HTTP endpoint
 
+## Effect-TS Refactoring (In Progress)
+
+The codebase is being refactored to use Effect-TS patterns for improved type safety, error handling, and maintainability.
+
+### Service Layer Architecture
+- **HttpService**: HTTP requests with retry and timeout using @effect/platform
+- **ConfigService**: Type-safe environment variable access
+- **KvStorageService**: Cloudflare KV operations with Effect error handling
+- **RssService**: RSS feed processing with structured error types
+- **DiscordService**: Discord webhook sending with rate limit handling
+- **HealthService**: Worker health status and metrics collection
+
+### Effect-TS Patterns
+- Context-based dependency injection using `Context.GenericTag`
+- Service composition with `Layer.mergeAll`
+- Structured error handling with `Data.TaggedError`
+- Effect composition with `Effect.gen` for sequential operations
+- Retry logic using `Schedule.exponential` and `Effect.retry`
+- Structured logging with `Logger.withSpan` and annotations
+
+### Migration Strategy
+- Gradual migration from Promise-based to Effect-based patterns
+- `Effect.tryPromise` for bridging existing async APIs
+- Comprehensive test coverage with contract, integration, and e2e tests
+- Backward compatibility maintained during transition
+
 ## Code Style
 
 - Uses Biome for formatting and linting
 - TypeScript with strict mode enabled
 - Double quotes for strings, space indentation
 - All code should pass `@biomejs/biome check`
+- Effect-TS functional programming patterns with immutable data structures
