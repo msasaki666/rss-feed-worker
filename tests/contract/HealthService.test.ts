@@ -48,6 +48,8 @@ describe("HealthService Contract", () => {
         expect(typeof error.service).toBe("string")
         expect(typeof error.error).toBe("string")
       })
+
+      return status
     })
     
     const result = await Effect.runPromise(
@@ -74,9 +76,11 @@ describe("HealthService Contract", () => {
       
       // Get status to verify recording worked
       const status = yield* health.getStatus()
-      
+
       // Contract: Should have processing structure (mock returns empty)
       expect(typeof status.lastProcessing).toBe("object")
+
+      return status
     })
     
     const result = await Effect.runPromise(
@@ -108,11 +112,13 @@ describe("HealthService Contract", () => {
       yield* health.recordFeedProcessing("Unhealthy Feed", false, "Repeated failures")
       yield* health.recordFeedProcessing("Unhealthy Feed", false, "More failures")
       yield* health.recordFeedProcessing("Unhealthy Feed", false, "Even more failures")
-      
+
       const unhealthyStatus = yield* health.getStatus()
-      
+
       // Contract: Should return valid status structure
       expect(['healthy', 'degraded', 'unhealthy']).toContain(unhealthyStatus.status)
+
+      return unhealthyStatus
     })
     
     // This will not fail because HealthService never fails
@@ -137,10 +143,12 @@ describe("HealthService Contract", () => {
       yield* health.recordFeedProcessing("Error Feed", false, errorMessage)
       
       const status = yield* health.getStatus()
-      
-      // Contract: Should have valid status structure  
+
+      // Contract: Should have valid status structure
       expect(typeof status.lastProcessing).toBe("object")
       expect(Array.isArray(status.errors)).toBe(true)
+
+      return status
     })
     
     const result = await Effect.runPromise(
@@ -169,10 +177,17 @@ describe("HealthService Contract", () => {
       const statusEffect = health.getStatus()
       const recordEffect = health.recordFeedProcessing("test", true)
       const recordWithErrorEffect = health.recordFeedProcessing("test", false, "error")
-      
+
       expect(statusEffect).toBeDefined()
       expect(recordEffect).toBeDefined()
       expect(recordWithErrorEffect).toBeDefined()
+
+      // Execute effects to verify they never fail and return status snapshot
+      yield* recordEffect
+      yield* recordWithErrorEffect
+      const finalStatus = yield* statusEffect
+
+      return finalStatus
     })
     
     const result = await Effect.runPromise(
@@ -191,14 +206,16 @@ describe("HealthService Contract", () => {
       const health = yield* HealthService
       
       const status = yield* health.getStatus()
-      
+
       // Contract: Version should be present and reasonable
       expect(status.version).toBeDefined()
       expect(typeof status.version).toBe("string")
       expect(status.version.length).toBeGreaterThan(0)
-      
+
       // Mock implementation returns not-implemented version
       expect(status.version).toBe("0.0.0-NOT-IMPLEMENTED")
+
+      return status
     })
     
     const result = await Effect.runPromise(
@@ -222,10 +239,12 @@ describe("HealthService Contract", () => {
       yield* health.recordFeedProcessing("Test", false, null as any) // Null error
       
       const status = yield* health.getStatus()
-      
+
       // Should always return valid status
       expect(status).toBeDefined()
       expect(status.status).toBeDefined()
+
+      return status
     })
     
     // This should never fail - HealthService is designed to be resilient

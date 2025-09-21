@@ -162,12 +162,15 @@ describe("RssService Contract", () => {
       // Contract: processFeed method exists and returns Effect
       expect(rss.processFeed).toBeDefined()
       expect(typeof rss.processFeed).toBe("function")
-      
+
       // Type test - this should compile without errors
       const effect = rss.processFeed("https://example.com/feed.xml", "Test")
       expect(effect).toBeDefined()
+
+      // Execute to confirm failing layer surfaces the error
+      yield* effect
     })
-    
+
     // This will fail because service is not implemented
     await expect(
       Effect.runPromise(program.pipe(Effect.provide(FailingAppLayer)))

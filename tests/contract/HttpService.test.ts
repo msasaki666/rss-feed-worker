@@ -80,12 +80,15 @@ describe("HttpService Contract", () => {
       // Contract: fetchFeed method exists and returns Effect
       expect(http.fetchFeed).toBeDefined()
       expect(typeof http.fetchFeed).toBe("function")
-      
+
       // Type test - this should compile without errors
       const effect = http.fetchFeed("https://example.com")
       expect(effect).toBeDefined()
+
+      // Execute to ensure failing layer surfaces correctly
+      yield* effect
     })
-    
+
     // This will fail because service is not implemented
     await expect(
       Effect.runPromise(program.pipe(Effect.provide(FailingAppLayer)))
