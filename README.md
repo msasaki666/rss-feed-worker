@@ -30,6 +30,21 @@ npm install
 npm run dev
 ```
 
+### Nix を使ったセットアップ
+Nix を使う場合は flake を利用した開発シェルを用意しています。
+
+```bash
+nix develop
+```
+
+`node_modules` は `npmlock2nix` を通じてロックファイルから復元されるため、追加の `npm install` は不要です。`node_modules/.bin` が PATH に追加されるので、`npm run dev` や `npm test` など既存の npm スクリプトをそのまま実行できます。
+
+依存モジュールだけを取得したい場合は次のコマンドで `node_modules` をビルドできます。
+
+```bash
+nix build .#nodeModules
+```
+
 ## 今後学ぶと良いこと
 1. Cloudflare Workers の基礎（Cron、KV、環境変数）
 2. `htmlparser2` による RSS/HTML パーシングと `p-retry` のリトライ戦略
