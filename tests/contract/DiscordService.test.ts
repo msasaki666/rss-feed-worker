@@ -165,12 +165,15 @@ describe("DiscordService Contract", () => {
       // Contract: sendWebhook method exists and returns Effect
       expect(discord.sendWebhook).toBeDefined()
       expect(typeof discord.sendWebhook).toBe("function")
-      
+
       // Type test - this should compile without errors
       const effect = discord.sendWebhook("https://discord.com/webhook", "test")
       expect(effect).toBeDefined()
+
+      // Execute to verify failing layer behaviour
+      yield* effect
     })
-    
+
     // This will fail because service is not implemented
     await expect(
       Effect.runPromise(program.pipe(Effect.provide(FailingAppLayer)))

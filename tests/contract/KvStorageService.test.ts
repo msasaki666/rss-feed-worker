@@ -154,13 +154,19 @@ describe("KvStorageService Contract", () => {
       const storeEffect = kv.storeItem(mockExtractedItems[0])
       const getEffect = kv.getMetrics("test")
       const updateEffect = kv.updateMetrics("test", mockProcessingMetrics)
-      
+
       expect(checkEffect).toBeDefined()
       expect(storeEffect).toBeDefined()
       expect(getEffect).toBeDefined()
       expect(updateEffect).toBeDefined()
+
+      // Execute each effect so the failing layer propagates errors
+      yield* checkEffect
+      yield* storeEffect
+      yield* getEffect
+      yield* updateEffect
     })
-    
+
     // This will fail because service is not implemented
     await expect(
       Effect.runPromise(program.pipe(Effect.provide(FailingAppLayer)))

@@ -282,11 +282,11 @@ export const FailingHealthService = Layer.succeed(
   {
     getStatus: () => Effect.succeed({
       status: 'unhealthy' as const,
-      timestamp: "1970-01-01T00:00:00.000Z",
+      timestamp: "1970-01-01T00:00:01.000Z",
       version: "0.0.0-NOT-IMPLEMENTED",
       lastProcessing: {},
       errors: [{
-        timestamp: "1970-01-01T00:00:00.000Z", 
+        timestamp: "1970-01-01T00:00:01.000Z",
         service: "HealthService",
         error: "Mock service not implemented"
       }]

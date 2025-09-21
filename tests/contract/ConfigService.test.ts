@@ -119,11 +119,15 @@ describe("ConfigService Contract", () => {
       // Type tests - these should compile without errors
       const webhookEffect = config.getDiscordWebhook('IT')
       const flagEffect = config.getFeatureFlag('TEST')
-      
+
       expect(webhookEffect).toBeDefined()
       expect(flagEffect).toBeDefined()
+
+      // Execute the effects to ensure failing layer propagates properly
+      yield* webhookEffect
+      yield* flagEffect
     })
-    
+
     // This will fail because service is not implemented
     await expect(
       Effect.runPromise(program.pipe(Effect.provide(FailingAppLayer)))
