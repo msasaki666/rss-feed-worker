@@ -15,7 +15,7 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.2",
     "vitest": "^4.1.11",
-    "wrangler": "^4.86.0"
+    "wrangler": "^4.149.0"
   },
   "dependencies": {
     "effect": "^3.22.2",
