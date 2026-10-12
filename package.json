@@ -14,12 +14,21 @@
     "@types/node": "^24.5.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4",
-    "wrangler": "^4.45.0"
+    "vitest": "^3.2.7",
+    "wrangler": "^4.86.0"
   },
   "dependencies": {
-    "effect": "^3.18.4",
+    "effect": "^3.22.2",
     "htmlparser2": "^10.0.0",
     "p-retry": "^7.1.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5",
+    "tinypool": "2.1.2",
+    "undici": "7.29.1",
+    "ws": "8.21.0",
+    "wrangler": {
+      "esbuild": "0.28.1"
+    }
   }
 }
