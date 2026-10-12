@@ -1,4 +1,4 @@
-import pRetry, { AbortError, type FailedAttemptError } from "p-retry";
+import pRetry, { AbortError, type RetryContext } from "p-retry";
 
 class DiscordRateLimitExceededError extends Error {
   retryAfter: number;
@@ -57,7 +57,7 @@ export const sendDiscordWebhook = async (
     return res;
   };
 
-  const shouldRetry = (error: FailedAttemptError) => {
+  const shouldRetry = ({ error }: RetryContext) => {
     if (error instanceof DiscordRateLimitExceededError) {
       console.log(
         `Discord rate limit exceeded. Retrying after ${error.retryAfter}s...`,
