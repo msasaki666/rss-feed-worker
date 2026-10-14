@@ -2,7 +2,6 @@ import type { Feed } from "htmlparser2";
 import { describe, expect, it, vi } from "vitest";
 import * as discord from "../src/discord";
 import * as rss from "../src/rss";
-import type { Env } from "../worker-configuration";
 
 vi.mock("cloudflare:workers", () => ({ env: {} }));
 
