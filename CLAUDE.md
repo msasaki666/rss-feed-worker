@@ -53,7 +53,7 @@ Use `curl "http://localhost:8787/__scheduled?cron=*+*+*+*+*"` to test the schedu
 
 Required environment variables (set via `wrangler secret`):
 - `DISCORD_WEBHOOK_URL_IT` - Discord webhook for IT/tech news
-- `DISCORD_WEBHOOK_URL_SCIENCE` - Discord webhook for science news  
+- `DISCORD_WEBHOOK_URL_SCIENCE` - Discord webhook for science news
 - `ENABLE_HTTP_REQUEST` - Feature flag to enable HTTP endpoint
 
 ## Code Style
