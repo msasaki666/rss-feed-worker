@@ -18,11 +18,13 @@ This is a Cloudflare Worker that monitors RSS feeds and sends new articles to Di
 ### Core Components
 
 **Main Entry Point (`src/index.ts`)**:
+
 - `handleScheduled()` - Main scheduled handler that processes all RSS feeds
 - `confirmRss()` - Core function that fetches RSS feed, checks for new items, and sends Discord notifications
 - `handleFetch()` - HTTP handler (disabled in production unless `ENABLE_HTTP_REQUEST=true`)
 
 **Key Data Structures**:
+
 - `TargetOption` interface defines RSS feed configuration with title, RSS URL, and Discord webhook
 - `targetOptions` array contains hardcoded feed configurations for IT news and Science feeds
 - Uses SHA-256 hashes of article URLs as unique identifiers
@@ -52,6 +54,7 @@ Use `curl "http://localhost:8787/__scheduled?cron=*+*+*+*+*"` to test the schedu
 ## Environment Setup
 
 Required environment variables (set via `wrangler secret`):
+
 - `DISCORD_WEBHOOK_URL_IT` - Discord webhook for IT/tech news
 - `DISCORD_WEBHOOK_URL_SCIENCE` - Discord webhook for science news
 - `ENABLE_HTTP_REQUEST` - Feature flag to enable HTTP endpoint
