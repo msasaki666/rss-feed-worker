@@ -50,7 +50,13 @@ Worker はその JWT を、チームの公開鍵（`https://<team>.cloudflareacc
 | `ACCESS_TEAM_DOMAIN` | `wrangler secret put` | `https://<team-name>.cloudflareaccess.com`         |
 | `ACCESS_AUD`         | `wrangler secret put` | アプリケーションの Application Audience (AUD) タグ |
 
-両方あるときだけ `/mcp` で JWT を必須にします。両方空なら検証しません。ローカルの `wrangler dev` 用です。本番の `/mcp` を公開する前に両方入れてください。片方だけだと設定ミスとして HTTP 500 になります。検証は `/mcp` だけです。それ以外のパスのレスポンスは変えていません。
+両方あるとき `/mcp` は JWT を必須にします。未設定の `/mcp` は HTTP 403 で拒否します。片方だけだと設定ミスとして HTTP 500 です。検証は `/mcp` だけです。それ以外のパスのレスポンスは変えていません。
+
+ローカルの `wrangler dev` で検証を省略するには、git に含めない `.dev.vars` へ次を書きます。本番の変数や secret には入れません。Access の 2 つが設定されているときは、このフラグがあっても JWT を検証します。
+
+```bash
+MCP_ALLOW_UNAUTHENTICATED=true
+```
 
 署名アルゴリズムは RS256、`iss` はチームドメイン、`aud` は AUD タグと一致する必要があります。トークンに書かれた issuer は信用しません。
 
@@ -104,7 +110,7 @@ Claude Code:
 claude mcp add --transport http rss-feed-worker https://rss-feed-worker.<subdomain>.workers.dev/mcp
 ```
 
-ローカルでは secret を空のまま `npm run dev` し、MCP Inspector で `http://localhost:8787/mcp` に接続する。
+ローカルでは `.dev.vars` に `MCP_ALLOW_UNAUTHENTICATED=true` を書いて `npm run dev` し、MCP Inspector で `http://localhost:8787/mcp` に接続する。
 
 ```bash
 npx @modelcontextprotocol/inspector
@@ -116,7 +122,7 @@ Access を有効にした本番 URL では、Inspector の **Quick OAuth Flow** 
 
 - AI 向けインターフェースはリモート MCP とした。チャット API や API キーは追加していない。
 - 認可の本体は Access の Managed OAuth。Worker は JWT の再検証だけを行う。
-- JWT 検証は `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` が両方あるときだけ有効。未設定の本番は `/mcp` が開いたままになる。
+- `/mcp` は Access の JWT 設定が無いと拒否する。検証の省略はローカルの `MCP_ALLOW_UNAUTHENTICATED=true` だけ。
 - ツールが触れるフィードは `src/feeds.ts` の定義だけ。任意 URL の取得はできない。
 - `publish_new_items` は Discord に投稿し、成功した URL を既読にする。確認だけなら `preview_feed` か `list_unseen_items` を使う。
 
@@ -132,6 +138,7 @@ Access を有効にした本番 URL では、Inspector の **Quick OAuth Flow** 
 - URL 一覧を送る Discord Webhook URL (例: NotebookLM 用)
 - `ENABLE_HTTP_REQUEST`: `/mcp` 以外の HTTP レスポンスを切り替えるフラグ（`wrangler.jsonc` の var）
 - `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD`: 本番の `/mcp` で必須。入れ方は「Cloudflare Access の設定」
+- `MCP_ALLOW_UNAUTHENTICATED=true`: ローカルの `.dev.vars` だけ。本番には入れない
 
 Discord の Webhook URL は wrangler の secret にしてください。
 

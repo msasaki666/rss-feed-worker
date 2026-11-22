@@ -30,6 +30,7 @@ const baseEnv = (overrides: Partial<Env> = {}): Env => {
     ENABLE_HTTP_REQUEST: "false",
     ACCESS_TEAM_DOMAIN: "",
     ACCESS_AUD: "",
+    MCP_ALLOW_UNAUTHENTICATED: "true",
     ...overrides,
   } as unknown as Env;
 };
@@ -325,6 +326,16 @@ describe("MCP endpoint", () => {
     expect(result.isError).toBe(true);
     expect(fetchFeed).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+
+  it("rejects /mcp when Access is not configured", async () => {
+    const called = await rpc(
+      baseEnv({ MCP_ALLOW_UNAUTHENTICATED: "" }),
+      "tools/list",
+      {},
+    );
+    expect(called.status).toBe(403);
+    expect(called.text).toMatch(/ACCESS_TEAM_DOMAIN/);
   });
 
   it("rejects MCP calls without an Access JWT when validation is configured", async () => {

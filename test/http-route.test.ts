@@ -17,6 +17,7 @@ const env = {
   ENABLE_HTTP_REQUEST: "true",
   ACCESS_TEAM_DOMAIN: "",
   ACCESS_AUD: "",
+  MCP_ALLOW_UNAUTHENTICATED: "true",
 } as unknown as Env;
 
 describe("ENABLE_HTTP_REQUEST", () => {

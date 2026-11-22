@@ -8,6 +8,7 @@ import {
 export interface AccessJwtEnv {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  MCP_ALLOW_UNAUTHENTICATED?: string;
 }
 
 export type AccessGate =
@@ -111,10 +112,15 @@ const plain = (message: string, status: number): Response => {
   });
 };
 
+const allowsLocalBypass = (env: AccessJwtEnv): boolean => {
+  return env.MCP_ALLOW_UNAUTHENTICATED?.trim() === "true";
+};
+
 /**
  * Cloudflare Access がエッジで認証する。ここは Cf-Access-Jwt-Assertion の
- * 再検証だけを行う。チームドメインと AUD が両方空なら検証しない。
- * 片方だけ設定されている場合は設定ミスとして拒否する。
+ * 再検証だけを行う。チームドメインと AUD が揃っていないリクエストは拒否する。
+ * 検証の省略は MCP_ALLOW_UNAUTHENTICATED=true のときだけで、Access 設定が
+ * ある場合はそのフラグより検証を優先する。
  */
 export const authorizeMcpRequest = async (
   request: Request,
@@ -130,10 +136,16 @@ export const authorizeMcpRequest = async (
   }
 
   if (!gate.enabled) {
+    if (!allowsLocalBypass(env)) {
+      return plain(
+        "Access JWT validation is required. Set ACCESS_TEAM_DOMAIN and ACCESS_AUD.",
+        403,
+      );
+    }
     if (!warnedAccessDisabled) {
       warnedAccessDisabled = true;
       console.warn(
-        "Access JWT validation is disabled because ACCESS_TEAM_DOMAIN and ACCESS_AUD are empty. Set both before exposing /mcp.",
+        "MCP authentication is bypassed because MCP_ALLOW_UNAUTHENTICATED=true. Do not set this outside local development.",
       );
     }
     return null;

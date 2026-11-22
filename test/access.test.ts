@@ -131,6 +131,34 @@ describe("authorizeMcpRequest", () => {
     fetchMock.mockRestore();
   });
 
+  it("rejects requests when Access is not configured", async () => {
+    const response = await authorizeMcpRequest(
+      new Request("https://worker.example/mcp"),
+      {},
+    );
+    expect(response?.status).toBe(403);
+    expect(await response?.text()).toMatch(/ACCESS_TEAM_DOMAIN/);
+  });
+
+  it("allows the local bypass only while Access is unset", async () => {
+    const open = await authorizeMcpRequest(
+      new Request("https://worker.example/mcp"),
+      { MCP_ALLOW_UNAUTHENTICATED: "true" },
+    );
+    expect(open).toBeNull();
+
+    const stillProtected = await authorizeMcpRequest(
+      new Request("https://worker.example/mcp"),
+      {
+        ACCESS_TEAM_DOMAIN: TEST_TEAM_DOMAIN,
+        ACCESS_AUD: TEST_AUD,
+        MCP_ALLOW_UNAUTHENTICATED: "true",
+      },
+    );
+    expect(stillProtected?.status).toBe(403);
+    expect(await stillProtected?.text()).toMatch(/Cf-Access-Jwt-Assertion/);
+  });
+
   it("returns 403 when the assertion header is missing", async () => {
     const response = await authorizeMcpRequest(
       new Request("https://worker.example/mcp"),
