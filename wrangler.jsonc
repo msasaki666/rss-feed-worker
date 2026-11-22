@@ -7,6 +7,7 @@
   "name": "rss-feed-worker",
   "main": "src/index.ts",
   "compatibility_date": "2025-05-06",
+  "compatibility_flags": ["nodejs_compat"], // MCP SDK が node:async_hooks を使う
   "observability": {
     "enabled": true
   },

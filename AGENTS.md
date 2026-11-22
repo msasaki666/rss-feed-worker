@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- Source: `src/` — `index.ts` (Worker entry), `rss.ts` (RSS fetch/parse), `discord.ts` (Webhook + retry), `mock.ts` (test helper).
+- Source: `src/` — `index.ts` (Worker entry), `feeds.ts` (feed list), `feed-processor.ts` (fetch, dedupe, Discord), `rss.ts` (RSS fetch/parse), `discord.ts` (Webhook + retry), `mcp.ts` (Streamable HTTP MCP at `/mcp`), `access.ts` (Access JWT), `mock.ts` (test helper).
 - Tests: `test/*.test.ts` (Vitest). Keep unit tests close to behavior (parsing, retries, KV logic via fakes).
 - Config: `wrangler.jsonc` (cron, KV, env vars), `tsconfig.json`, `biome.json`, `.editorconfig`, `.dev.vars` (local dev values; never commit secrets).
 
@@ -27,7 +27,7 @@
 
 - Framework: Vitest. Place tests under `test/` and suffix with `.test.ts`.
 - Network: mock `fetch`; don’t hit real endpoints. Use `vi.useFakeTimers()` for retry/timer logic.
-- Scope: cover RSS parsing/normalization, SHA-256 link hashing, 429 retry behavior, and 404 aborts.
+- Scope: cover RSS parsing/normalization, SHA-256 link hashing, 429 retry behavior, 404 aborts, MCP tool calls, and Access JWT checks.
 - Run locally/CI: `npm test`.
 
 ## Commit & Pull Request Guidelines
