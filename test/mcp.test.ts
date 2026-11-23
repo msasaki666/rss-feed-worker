@@ -137,6 +137,8 @@ describe("MCP endpoint", () => {
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_feeds",
       "list_webhook_keys",
+      "set_webhook",
+      "remove_webhook",
       "add_feed",
       "update_feed",
       "remove_feed",

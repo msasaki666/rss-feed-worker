@@ -9,6 +9,7 @@ import {
   loadCatalog,
   removeFeed,
   resolveWebhookUrl,
+  setWebhook,
   updateFeed,
 } from "../src/feed-store";
 import * as rss from "../src/rss";
@@ -24,7 +25,6 @@ const envFor = (
     RSS_FEED_WORKER_KV: bucket.kv,
     DISCORD_WEBHOOK_URL_IT: SECRET,
     DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science-secret",
-    DISCORD_WEBHOOKS: extra.DISCORD_WEBHOOKS,
     ...extra,
   } as unknown as Env;
 };
@@ -56,38 +56,23 @@ describe("feed catalog", () => {
     expect(await loadCatalog(env)).toEqual([]);
   });
 
-  it("lists webhook names and never the secret URL", () => {
-    const keys = listWebhookKeys({
-      DISCORD_WEBHOOK_URL_IT: SECRET,
-      DISCORD_WEBHOOK_URL_SCIENCE: "",
-      DISCORD_WEBHOOKS: JSON.stringify({
-        EXTRA: "https://discord.example/extra-secret",
-        IT: "https://discord.example/should-not-override",
-      }),
-    });
-    expect(keys).toEqual(["IT", "EXTRA"]);
-    expect(JSON.stringify(keys)).not.toContain("secret");
-    expect(
-      resolveWebhookUrl(
-        {
-          DISCORD_WEBHOOK_URL_IT: SECRET,
-          DISCORD_WEBHOOKS: JSON.stringify({
-            IT: "https://discord.example/should-not-override",
-          }),
-        },
-        "IT",
-      ),
-    ).toBe(SECRET);
-  });
-
-  it("ignores a broken webhook secret without dropping built-in keys", () => {
-    expect(
-      listWebhookKeys({
-        DISCORD_WEBHOOK_URL_IT: SECRET,
-        DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science-secret",
-        DISCORD_WEBHOOKS: "{",
-      }),
-    ).toEqual(["IT", "SCIENCE"]);
+  it("keeps the built-in secret aliases and stores new webhooks only by name", async () => {
+    const bucket = memoryKv();
+    const env = envFor(bucket);
+    expect(await resolveWebhookUrl(env, "IT")).toBe(SECRET);
+    const saved = await setWebhook(
+      env,
+      "EXTRA",
+      "https://discord.com/api/webhooks/42/abcdefghij",
+    );
+    expect(saved.ok).toBe(true);
+    const listed = await listWebhookKeys(env);
+    expect(listed.map((item) => item.name)).toEqual(
+      expect.arrayContaining(["IT", "SCIENCE", "EXTRA"]),
+    );
+    expect(JSON.stringify(listed)).not.toContain(SECRET);
+    expect(JSON.stringify(listed)).not.toContain("abcdefghij");
+    expect(listed.find((item) => item.name === "EXTRA")?.hint).toBe("ghij");
   });
 
   it("rejects unsafe URLs before fetching and saves a parsed feed", async () => {

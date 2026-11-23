@@ -7,19 +7,23 @@ import type { StoredFeed } from "./feed-store";
 import {
   addFeed,
   getEnabledFeedTargets,
+  knownWebhookSecrets,
   listWebhookKeys,
   loadCatalog,
   removeFeed,
+  removeWebhook,
   resolveWebhookUrl,
+  setWebhook,
   toPublicFeed,
   updateFeed,
 } from "./feed-store";
 import type { FeedTarget } from "./feeds";
 import type { ExtractedItem } from "./rss";
+import { redactText, redactValue } from "./webhook-url";
 
 const SERVER_INSTRUCTIONS = [
   "設定済み RSS フィードの確認、登録、未読記事の Discord 通知に使う。",
-  "Webhook の URL は返さない。フィードは webhookKey で secret の別名を指す。",
+  "Webhook の URL は返さない。set_webhook で登録するか、add_feed に webhookUrl を渡す。",
   "先に list_feeds と list_webhook_keys を確認する。",
   "preview_feed と list_unseen_items は読み取り専用で、既読にはしない。",
   "add_feed と、rssUrl を変える update_feed は、既定で今ある記事を投稿せず既読にする。",
@@ -50,18 +54,54 @@ const textContent = (text: string): ToolText[] => {
   return [{ type: "text", text }];
 };
 
-const errorResult = (message: string) => {
+const fail = async (env: Env, message: string) => {
+  const text = redactText(message, await secretStrings(env));
   return {
     isError: true as const,
-    content: textContent(message),
+    content: textContent(text),
   };
 };
 
-const jsonResult = (value: Record<string, unknown>) => {
+const present = async (env: Env, value: Record<string, unknown>) => {
+  const redacted = redactValue(value, await secretStrings(env)) as Record<
+    string,
+    unknown
+  >;
   return {
-    content: textContent(JSON.stringify(value, null, 2)),
-    structuredContent: value,
+    content: textContent(JSON.stringify(redacted, null, 2)),
+    structuredContent: redacted,
   };
+};
+
+const secretStrings = async (env: Env): Promise<string[]> => {
+  const builtIn = [
+    env.DISCORD_WEBHOOK_URL_IT,
+    env.DISCORD_WEBHOOK_URL_SCIENCE,
+    env.DISCORD_WEBHOOK_URL_NOTEBOOKLM,
+  ].filter((value): value is string => {
+    return typeof value === "string" && value.length > 0;
+  });
+  try {
+    return [...builtIn, ...(await knownWebhookSecrets(env))];
+  } catch {
+    return builtIn;
+  }
+};
+
+const guard = async (
+  env: Env,
+  run: () => Promise<{
+    isError?: true;
+    content: ToolText[];
+    structuredContent?: Record<string, unknown>;
+  }>,
+) => {
+  try {
+    return await run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    return fail(env, message);
+  }
 };
 
 const pageItems = (items: ExtractedItem[], limit: number | undefined) => {
@@ -102,11 +142,11 @@ const findStored = async (env: Env, feed: string) => {
   };
 };
 
-const toProcessTarget = (
+const toProcessTarget = async (
   env: Env,
   stored: StoredFeed,
-): FeedTarget | undefined => {
-  const discordWebhookUrl = resolveWebhookUrl(env, stored.webhookKey);
+): Promise<FeedTarget | undefined> => {
+  const discordWebhookUrl = await resolveWebhookUrl(env, stored.webhookKey);
   if (!discordWebhookUrl) {
     return undefined;
   }
@@ -120,7 +160,7 @@ const toProcessTarget = (
 const readFeed = async (env: Env, feed: string, limit: number | undefined) => {
   const found = await findStored(env, feed);
   if (!found.stored) {
-    return errorResult(found.message ?? "未知のフィードです。");
+    return await fail(env, found.message ?? "未知のフィードです。");
   }
   try {
     const loaded = await loadFeedItems(
@@ -128,19 +168,21 @@ const readFeed = async (env: Env, feed: string, limit: number | undefined) => {
       found.stored.postTitle,
     );
     if (!loaded.ok) {
-      return errorResult(
+      return await fail(
+        env,
         loaded.status === "fetch_failed"
           ? `${found.stored.postTitle} の取得に失敗しました (HTTP ${loaded.httpStatus})。既読にはしていません。`
           : `${found.stored.postTitle} の RSS を解釈できませんでした。既読にはしていません。`,
       );
     }
-    return jsonResult({
+    return await present(env, {
       feed: toPublicFeed(found.stored),
       ...pageItems(loaded.items, limit),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    return errorResult(
+    return await fail(
+      env,
       `${found.stored.postTitle} の取得に失敗しました: ${message}`,
     );
   }
@@ -169,14 +211,15 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: false,
       },
     },
-    async () => {
-      const feeds = await loadCatalog(env);
-      return jsonResult({
-        feeds: feeds.map((feed) => {
-          return toPublicFeed(feed);
-        }),
-      });
-    },
+    async () =>
+      guard(env, async () => {
+        const feeds = await loadCatalog(env);
+        return await present(env, {
+          feeds: feeds.map((feed) => {
+            return toPublicFeed(feed);
+          }),
+        });
+      }),
   );
 
   server.registerTool(
@@ -184,7 +227,7 @@ export const createRssMcpServer = (env: Env): McpServer => {
     {
       title: "Webhook の別名一覧",
       description:
-        "フィードに指定できる webhookKey の名前だけを返す。URL は返さない。新しい別名は Worker の secret に追加する。",
+        "登録済み Webhook の名前と、トークン末尾 4 文字だけを返す。URL は返さない。",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -192,9 +235,63 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: false,
       },
     },
-    async () => {
-      return jsonResult({ keys: listWebhookKeys(env) });
+    async () =>
+      guard(env, async () => {
+        return await present(env, { webhooks: await listWebhookKeys(env) });
+      }),
+  );
+
+  server.registerTool(
+    "set_webhook",
+    {
+      title: "Webhook を登録",
+      description:
+        "Discord の Webhook URL を名前で KV に保存する。URL は応答に含めない。ホストは discord.com か discordapp.com、パスは /api/webhooks/{id}/{token}。",
+      inputSchema: z.object({
+        name: z.string().describe("フィードの webhookKey に使う名前。"),
+        webhookUrl: z.string().describe("Discord の Incoming Webhook URL。"),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
+    async ({ name, webhookUrl }) =>
+      guard(env, async () => {
+        const result = await setWebhook(env, name, webhookUrl);
+        if (!result.ok) {
+          return await fail(env, result.message);
+        }
+        return await present(env, { webhook: result.webhook });
+      }),
+  );
+
+  server.registerTool(
+    "remove_webhook",
+    {
+      title: "Webhook を削除",
+      description:
+        "KV に保存した Webhook を名前で削除する。Worker secret の IT / SCIENCE は削除できない。URL は応答に含めない。",
+      inputSchema: z.object({
+        name: z.string().describe("削除する Webhook の名前。"),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ name }) =>
+      guard(env, async () => {
+        const result = await removeWebhook(env, name);
+        if (!result.ok) {
+          return await fail(env, result.message);
+        }
+        return await present(env, { name: result.name });
+      }),
   );
 
   server.registerTool(
@@ -202,7 +299,7 @@ export const createRssMcpServer = (env: Env): McpServer => {
     {
       title: "フィードを追加",
       description:
-        "RSS URL が https で、取得して RSS/Atom として解釈できるときだけ保存する。webhookKey は list_webhook_keys の名前。URL 自体は受け取らない。既定では現在の記事を Discord に投稿せず既読にする。",
+        "RSS URL が https で、取得して RSS/Atom として解釈できるときだけ保存する。投稿先は webhookKey か、Discord の webhookUrl。URL は保存するが応答には出さない。既定では現在の記事を投稿せず既読にする。",
       inputSchema: z.object({
         id: z
           .string()
@@ -210,7 +307,16 @@ export const createRssMcpServer = (env: Env): McpServer => {
           .describe("省略すると自動で付く。小文字、数字、ハイフン。"),
         postTitle: z.string().describe("Discord に出すフィード名。"),
         rssUrl: z.string().describe("https の RSS/Atom URL。"),
-        webhookKey: z.string().describe("投稿先の別名。例: IT、SCIENCE。"),
+        webhookKey: z
+          .string()
+          .optional()
+          .describe(
+            "登録済みの名前、または IT / SCIENCE。webhookUrl と一緒ならその名前で保存する。",
+          ),
+        webhookUrl: z
+          .string()
+          .optional()
+          .describe("Discord の Webhook URL。応答には残らない。"),
         enabled: z
           .boolean()
           .optional()
@@ -229,13 +335,14 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: true,
       },
     },
-    async (input) => {
-      const result = await addFeed(env, input);
-      if (!result.ok) {
-        return errorResult(result.message);
-      }
-      return jsonResult({ feed: result.feed, marked: result.marked });
-    },
+    async (input) =>
+      guard(env, async () => {
+        const result = await addFeed(env, input);
+        if (!result.ok) {
+          return await fail(env, result.message);
+        }
+        return await present(env, { feed: result.feed, marked: result.marked });
+      }),
   );
 
   server.registerTool(
@@ -249,6 +356,7 @@ export const createRssMcpServer = (env: Env): McpServer => {
         postTitle: z.string().optional(),
         rssUrl: z.string().optional(),
         webhookKey: z.string().optional(),
+        webhookUrl: z.string().optional(),
         enabled: z.boolean().optional(),
         markCurrentAsSeen: z
           .boolean()
@@ -262,13 +370,14 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: true,
       },
     },
-    async (input) => {
-      const result = await updateFeed(env, input);
-      if (!result.ok) {
-        return errorResult(result.message);
-      }
-      return jsonResult({ feed: result.feed, marked: result.marked });
-    },
+    async (input) =>
+      guard(env, async () => {
+        const result = await updateFeed(env, input);
+        if (!result.ok) {
+          return await fail(env, result.message);
+        }
+        return await present(env, { feed: result.feed, marked: result.marked });
+      }),
   );
 
   server.registerTool(
@@ -287,13 +396,14 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: false,
       },
     },
-    async ({ id }) => {
-      const result = await removeFeed(env, id);
-      if (!result.ok) {
-        return errorResult(result.message);
-      }
-      return jsonResult({ id: result.id });
-    },
+    async ({ id }) =>
+      guard(env, async () => {
+        const result = await removeFeed(env, id);
+        if (!result.ok) {
+          return await fail(env, result.message);
+        }
+        return await present(env, { id: result.id });
+      }),
   );
 
   server.registerTool(
@@ -313,9 +423,10 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: true,
       },
     },
-    async ({ feed, limit }) => {
-      return readFeed(env, feed, limit);
-    },
+    async ({ feed, limit }) =>
+      guard(env, async () => {
+        return readFeed(env, feed, limit);
+      }),
   );
 
   server.registerTool(
@@ -335,39 +446,42 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: true,
       },
     },
-    async ({ feed, limit }) => {
-      const found = await findStored(env, feed);
-      if (!found.stored) {
-        return errorResult(found.message ?? "未知のフィードです。");
-      }
-      try {
-        const loaded = await loadFeedItems(
-          found.stored.rssUrl,
-          found.stored.postTitle,
-        );
-        if (!loaded.ok) {
-          return errorResult(
-            loaded.status === "fetch_failed"
-              ? `${found.stored.postTitle} の取得に失敗しました (HTTP ${loaded.httpStatus})。既読にはしていません。`
-              : `${found.stored.postTitle} の RSS を解釈できませんでした。既読にはしていません。`,
+    async ({ feed, limit }) =>
+      guard(env, async () => {
+        const found = await findStored(env, feed);
+        if (!found.stored) {
+          return await fail(env, found.message ?? "未知のフィードです。");
+        }
+        try {
+          const loaded = await loadFeedItems(
+            found.stored.rssUrl,
+            found.stored.postTitle,
+          );
+          if (!loaded.ok) {
+            return await fail(
+              env,
+              loaded.status === "fetch_failed"
+                ? `${found.stored.postTitle} の取得に失敗しました (HTTP ${loaded.httpStatus})。既読にはしていません。`
+                : `${found.stored.postTitle} の RSS を解釈できませんでした。既読にはしていません。`,
+            );
+          }
+          const { unseen } = await partitionUnseen(
+            loaded.items,
+            env.RSS_FEED_WORKER_KV,
+          );
+          return await present(env, {
+            feed: toPublicFeed(found.stored),
+            ...pageItems(unseen, limit),
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "unknown error";
+          return await fail(
+            env,
+            `${found.stored.postTitle} の未読確認に失敗しました: ${message}`,
           );
         }
-        const { unseen } = await partitionUnseen(
-          loaded.items,
-          env.RSS_FEED_WORKER_KV,
-        );
-        return jsonResult({
-          feed: toPublicFeed(found.stored),
-          ...pageItems(unseen, limit),
-        });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "unknown error";
-        return errorResult(
-          `${found.stored.postTitle} の未読確認に失敗しました: ${message}`,
-        );
-      }
-    },
+      }),
   );
 
   server.registerTool(
@@ -388,46 +502,49 @@ export const createRssMcpServer = (env: Env): McpServer => {
         openWorldHint: true,
       },
     },
-    async ({ feed }) => {
-      if (feed !== undefined && feed.trim().length === 0) {
-        return errorResult(
-          "feed が空です。省略するか、list_feeds の id か postTitle を指定してください。",
-        );
-      }
-      let targets: FeedTarget[] = [];
-      if (feed === undefined) {
-        targets = await getEnabledFeedTargets(env);
-      } else {
-        const found = await findStored(env, feed);
-        if (!found.stored) {
-          return errorResult(found.message ?? "未知のフィードです。");
-        }
-        const target = toProcessTarget(env, found.stored);
-        if (!target) {
-          return errorResult(
-            `webhookKey「${found.stored.webhookKey}」は設定されていません。`,
+    async ({ feed }) =>
+      guard(env, async () => {
+        if (feed !== undefined && feed.trim().length === 0) {
+          return await fail(
+            env,
+            "feed が空です。省略するか、list_feeds の id か postTitle を指定してください。",
           );
         }
-        targets = [target];
-      }
-
-      const results = [];
-      for (const target of targets) {
-        try {
-          const result = await processFeed(target, env);
-          results.push(result);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "unknown error";
-          results.push({
-            postTitle: target.postTitle,
-            status: "error",
-            message,
-          });
+        let targets: FeedTarget[] = [];
+        if (feed === undefined) {
+          targets = await getEnabledFeedTargets(env);
+        } else {
+          const found = await findStored(env, feed);
+          if (!found.stored) {
+            return await fail(env, found.message ?? "未知のフィードです。");
+          }
+          const target = await toProcessTarget(env, found.stored);
+          if (!target) {
+            return await fail(
+              env,
+              `webhookKey「${found.stored.webhookKey}」は設定されていません。`,
+            );
+          }
+          targets = [target];
         }
-      }
-      return jsonResult({ feeds: results });
-    },
+
+        const results = [];
+        for (const target of targets) {
+          try {
+            const result = await processFeed(target, env);
+            results.push(result);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "unknown error";
+            results.push({
+              postTitle: target.postTitle,
+              status: "error",
+              message,
+            });
+          }
+        }
+        return await present(env, { feeds: results });
+      }),
   );
 
   return server;

@@ -1,8 +1,10 @@
 import { loadFeedItems, SEEN_TTL_SECONDS } from "./feed-processor";
 import { validateFeedUrl } from "./feed-url";
 import type { FeedTarget } from "./feeds";
+import { validateWebhookUrl, webhookHint } from "./webhook-url";
 
 export const CATALOG_KEY = "feed:v1:catalog";
+export const WEBHOOKS_KEY = "feed:v1:webhooks";
 
 const WEBHOOK_KEY = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const FEED_ID = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -37,7 +39,6 @@ export interface FeedMutationError {
 type WebhookEnv = {
   DISCORD_WEBHOOK_URL_IT?: string;
   DISCORD_WEBHOOK_URL_SCIENCE?: string;
-  DISCORD_WEBHOOKS?: string;
 };
 
 type FeedWriteEnv = WebhookEnv & {
@@ -78,63 +79,170 @@ export const toPublicFeed = (feed: StoredFeed): PublicFeed => {
   };
 };
 
-const extraWebhooks = (env: WebhookEnv): Record<string, string> => {
-  const raw = env.DISCORD_WEBHOOKS?.trim() ?? "";
-  if (raw.length === 0) {
-    return {};
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    console.error("DISCORD_WEBHOOKS is not valid JSON");
-    return {};
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    console.error("DISCORD_WEBHOOKS must be a JSON object");
-    return {};
-  }
-  const webhooks: Record<string, string> = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    if (!WEBHOOK_KEY.test(key) || typeof value !== "string") {
-      continue;
-    }
-    const url = value.trim();
-    if (!url.startsWith("https://")) {
-      continue;
-    }
-    webhooks[key] = url;
-  }
-  return webhooks;
-};
+export interface PublicWebhook {
+  name: string;
+  hint: string;
+}
 
-export const listWebhookKeys = (env: WebhookEnv): string[] => {
-  const keys: string[] = [];
-  if (nonempty(env.DISCORD_WEBHOOK_URL_IT)) {
-    keys.push("IT");
-  }
-  if (nonempty(env.DISCORD_WEBHOOK_URL_SCIENCE)) {
-    keys.push("SCIENCE");
-  }
-  for (const key of Object.keys(extraWebhooks(env))) {
-    if (!keys.includes(key)) {
-      keys.push(key);
-    }
-  }
-  return keys;
-};
-
-export const resolveWebhookUrl = (
-  env: WebhookEnv,
-  webhookKey: string,
-): string | undefined => {
-  if (webhookKey === "IT") {
+const builtinWebhook = (env: WebhookEnv, name: string): string | undefined => {
+  if (name === "IT") {
     return nonempty(env.DISCORD_WEBHOOK_URL_IT);
   }
-  if (webhookKey === "SCIENCE") {
+  if (name === "SCIENCE") {
     return nonempty(env.DISCORD_WEBHOOK_URL_SCIENCE);
   }
-  return nonempty(extraWebhooks(env)[webhookKey]);
+  return undefined;
+};
+
+const readWebhookRegistry = (raw: string | null): Record<string, string> => {
+  if (raw === null) {
+    return {};
+  }
+  const parsed: unknown = JSON.parse(raw);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("webhook registry is not an object");
+  }
+  const registry: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value === "string") {
+      registry[key] = value;
+    }
+  }
+  return registry;
+};
+
+export const loadWebhookRegistry = async (
+  env: FeedWriteEnv,
+): Promise<Record<string, string>> => {
+  const raw = await env.RSS_FEED_WORKER_KV.get(WEBHOOKS_KEY);
+  return readWebhookRegistry(raw);
+};
+
+const writeWebhookRegistry = async (
+  env: FeedWriteEnv,
+  registry: Record<string, string>,
+): Promise<void> => {
+  await env.RSS_FEED_WORKER_KV.put(WEBHOOKS_KEY, JSON.stringify(registry));
+};
+
+export const knownWebhookSecrets = async (
+  env: FeedWriteEnv,
+): Promise<string[]> => {
+  const registry = await loadWebhookRegistry(env);
+  return [
+    env.DISCORD_WEBHOOK_URL_IT,
+    env.DISCORD_WEBHOOK_URL_SCIENCE,
+    ...Object.values(registry),
+  ].filter((value): value is string => {
+    return typeof value === "string" && value.trim().length > 0;
+  });
+};
+
+export const listWebhookKeys = async (
+  env: FeedWriteEnv,
+): Promise<PublicWebhook[]> => {
+  const registry = await loadWebhookRegistry(env);
+  const names = new Set<string>(Object.keys(registry));
+  if (nonempty(env.DISCORD_WEBHOOK_URL_IT)) {
+    names.add("IT");
+  }
+  if (nonempty(env.DISCORD_WEBHOOK_URL_SCIENCE)) {
+    names.add("SCIENCE");
+  }
+  return [...names].map((name) => {
+    const url = registry[name] ?? builtinWebhook(env, name) ?? "";
+    return { name, hint: webhookHint(url) };
+  });
+};
+
+export const resolveWebhookUrl = async (
+  env: FeedWriteEnv,
+  webhookKey: string,
+): Promise<string | undefined> => {
+  const registry = await loadWebhookRegistry(env);
+  return nonempty(registry[webhookKey]) ?? builtinWebhook(env, webhookKey);
+};
+
+export const setWebhook = async (
+  env: FeedWriteEnv,
+  name: string,
+  webhookUrl: string,
+): Promise<{ ok: true; webhook: PublicWebhook } | FeedMutationError> => {
+  const key = name.trim();
+  if (!WEBHOOK_KEY.test(key)) {
+    return { ok: false, message: "Webhook の名前は英数字、_、- だけです。" };
+  }
+  const checked = validateWebhookUrl(webhookUrl);
+  if (!checked.ok) {
+    return { ok: false, message: checked.message };
+  }
+  const registry = await loadWebhookRegistry(env);
+  registry[key] = checked.url;
+  await writeWebhookRegistry(env, registry);
+  return { ok: true, webhook: { name: key, hint: checked.hint } };
+};
+
+export const removeWebhook = async (
+  env: FeedWriteEnv,
+  name: string,
+): Promise<{ ok: true; name: string } | FeedMutationError> => {
+  const key = name.trim();
+  const registry = await loadWebhookRegistry(env);
+  if (!(key in registry)) {
+    if (builtinWebhook(env, key)) {
+      return {
+        ok: false,
+        message: `「${key}」は Worker secret なのでここからは削除できません。`,
+      };
+    }
+    return { ok: false, message: `Webhook「${key}」はありません。` };
+  }
+  const feeds = await loadCatalog(env);
+  const usedBy = feeds
+    .filter((feed) => {
+      return feed.webhookKey === key;
+    })
+    .map((feed) => {
+      return feed.id;
+    });
+  if (usedBy.length > 0 && !builtinWebhook(env, key)) {
+    return {
+      ok: false,
+      message: `Webhook「${key}」は ${usedBy.join(", ")} が使っています。`,
+    };
+  }
+  delete registry[key];
+  await writeWebhookRegistry(env, registry);
+  return { ok: true, name: key };
+};
+
+const assignWebhook = async (
+  env: FeedWriteEnv,
+  input: { webhookKey?: string; webhookUrl?: string; fallbackName: string },
+): Promise<{ ok: true; key: string } | FeedMutationError> => {
+  const url = input.webhookUrl?.trim() ?? "";
+  const key = input.webhookKey?.trim() ?? "";
+  if (url.length > 0) {
+    const name = key.length > 0 ? key : input.fallbackName;
+    const saved = await setWebhook(env, name, url);
+    if (!saved.ok) {
+      return saved;
+    }
+    return { ok: true, key: saved.webhook.name };
+  }
+  if (key.length > 0) {
+    if (!WEBHOOK_KEY.test(key)) {
+      return { ok: false, message: "webhookKey の形式が正しくありません。" };
+    }
+    if (!(await resolveWebhookUrl(env, key))) {
+      return {
+        ok: false,
+        message: `webhookKey「${key}」は登録されていません。`,
+      };
+    }
+    return { ok: true, key };
+  }
+  return { ok: false, message: "webhookKey か webhookUrl が必要です。" };
 };
 
 const asStoredFeed = (value: unknown): StoredFeed | null => {
@@ -202,7 +310,7 @@ export const getEnabledFeedTargets = async (
     if (!feed.enabled) {
       continue;
     }
-    const discordWebhookUrl = resolveWebhookUrl(env, feed.webhookKey);
+    const discordWebhookUrl = await resolveWebhookUrl(env, feed.webhookKey);
     if (!discordWebhookUrl) {
       console.error(`Missing webhook for feed ${feed.id} (${feed.webhookKey})`);
       continue;
@@ -273,7 +381,8 @@ export interface AddFeedInput {
   id?: string;
   postTitle: string;
   rssUrl: string;
-  webhookKey: string;
+  webhookKey?: string;
+  webhookUrl?: string;
   enabled?: boolean;
   markCurrentAsSeen?: boolean;
 }
@@ -292,13 +401,6 @@ export const addFeed = async (
   const checked = validateFeedUrl(input.rssUrl);
   if (!checked.ok) {
     return checked;
-  }
-  const webhookKey = input.webhookKey.trim();
-  if (!WEBHOOK_KEY.test(webhookKey) || !resolveWebhookUrl(env, webhookKey)) {
-    return {
-      ok: false,
-      message: `webhookKey「${webhookKey}」は設定されていません。list_webhook_keys を確認してください。`,
-    };
   }
   const feeds = await loadCatalog(env);
   let id = input.id?.trim() ?? "";
@@ -323,6 +425,14 @@ export const addFeed = async (
   ) {
     return { ok: false, message: `id「${id}」は既にあります。` };
   }
+  const webhook = await assignWebhook(env, {
+    webhookKey: input.webhookKey,
+    webhookUrl: input.webhookUrl,
+    fallbackName: `wh-${id}`,
+  });
+  if (!webhook.ok) {
+    return webhook;
+  }
   const loaded = await loadParsedFeed(checked.url, postTitle);
   if (!loaded.ok) {
     return loaded;
@@ -331,7 +441,7 @@ export const addFeed = async (
     id,
     postTitle,
     rssUrl: checked.url,
-    webhookKey,
+    webhookKey: webhook.key,
     enabled: input.enabled ?? true,
   };
   feeds.push(feed);
@@ -346,6 +456,7 @@ export interface UpdateFeedInput {
   postTitle?: string;
   rssUrl?: string;
   webhookKey?: string;
+  webhookUrl?: string;
   enabled?: boolean;
   markCurrentAsSeen?: boolean;
 }
@@ -374,14 +485,16 @@ export const updateFeed = async (
     postTitle = normalized;
   }
   let webhookKey = current.webhookKey;
-  if (input.webhookKey !== undefined) {
-    webhookKey = input.webhookKey.trim();
-    if (!WEBHOOK_KEY.test(webhookKey) || !resolveWebhookUrl(env, webhookKey)) {
-      return {
-        ok: false,
-        message: `webhookKey「${webhookKey}」は設定されていません。list_webhook_keys を確認してください。`,
-      };
+  if (input.webhookUrl !== undefined || input.webhookKey !== undefined) {
+    const webhook = await assignWebhook(env, {
+      webhookKey: input.webhookKey,
+      webhookUrl: input.webhookUrl,
+      fallbackName: `wh-${current.id}`,
+    });
+    if (!webhook.ok) {
+      return webhook;
     }
+    webhookKey = webhook.key;
   }
   let rssUrl = current.rssUrl;
   let loadedItems: Array<{ title: string; link: string; linkHash: string }> =
