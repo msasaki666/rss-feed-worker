@@ -2,6 +2,7 @@ import type { Feed } from "htmlparser2";
 import { describe, expect, it, vi } from "vitest";
 import * as discord from "../src/discord";
 import * as rss from "../src/rss";
+import { memoryKv } from "./memory-kv";
 
 vi.mock("cloudflare:workers", () => ({ env: {} }));
 
@@ -200,14 +201,18 @@ describe("processFeed", () => {
       return new Response("ok", { status: 200 });
     });
     vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
-    vi.spyOn(rss, "extractItems").mockResolvedValue([
-      {
-        title: "Scheduled",
-        link: "https://example.com/scheduled",
-        linkHash: "hash-scheduled",
-        id: undefined,
-      },
-    ]);
+    let feedNumber = 0;
+    vi.spyOn(rss, "extractItems").mockImplementation(async () => {
+      feedNumber += 1;
+      return [
+        {
+          title: "Scheduled",
+          link: `https://example.com/scheduled-${feedNumber}`,
+          linkHash: `hash-scheduled-${feedNumber}`,
+          id: undefined,
+        },
+      ];
+    });
     const destinations: string[] = [];
     vi.spyOn(discord, "sendDiscordWebhook").mockImplementation(
       async (url: string) => {
@@ -216,12 +221,7 @@ describe("processFeed", () => {
       },
     );
     const env = {
-      RSS_FEED_WORKER_KV: {
-        get: async (keys: string[]) => {
-          return new Map(keys.map((key) => [key, null]));
-        },
-        put: async () => {},
-      },
+      RSS_FEED_WORKER_KV: memoryKv().kv as unknown as Env["RSS_FEED_WORKER_KV"],
       DISCORD_WEBHOOK_URL_IT: "https://discord.example/it",
       DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science",
       DISCORD_WEBHOOK_URL_NOTEBOOKLM: "",

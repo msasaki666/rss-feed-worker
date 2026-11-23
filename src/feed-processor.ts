@@ -1,5 +1,8 @@
 import { sendDiscordWebhook } from "./discord";
 import type { FeedTarget } from "./feeds";
+
+export const SEEN_TTL_SECONDS = 60 * 60 * 24 * 10;
+
 import {
   type ExtractedItem,
   extractItems,
@@ -159,7 +162,7 @@ export const processFeed = async (
           link: item.link,
         }),
         {
-          expirationTtl: 60 * 60 * 24 * 10, // 10日。保存容量の上限を越えないようにするため。
+          expirationTtl: SEEN_TTL_SECONDS, // 10日。保存容量の上限を越えないようにするため。
         },
       );
     } catch (error) {

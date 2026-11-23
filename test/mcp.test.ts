@@ -9,6 +9,7 @@ import {
   TEST_AUD,
   TEST_TEAM_DOMAIN,
 } from "./access-fixture";
+import { memoryKv } from "./memory-kv";
 
 vi.mock("cloudflare:workers", () => ({ env: {} }));
 
@@ -19,12 +20,7 @@ const ctx = {
 
 const baseEnv = (overrides: Partial<Env> = {}): Env => {
   return {
-    RSS_FEED_WORKER_KV: {
-      get: async (keys: string[]) => {
-        return new Map(keys.map((key) => [key, null]));
-      },
-      put: async () => {},
-    },
+    RSS_FEED_WORKER_KV: memoryKv().kv as unknown as Env["RSS_FEED_WORKER_KV"],
     DISCORD_WEBHOOK_URL_IT: "https://discord.example/it-secret",
     DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science-secret",
     DISCORD_WEBHOOK_URL_NOTEBOOKLM: "https://discord.example/list-secret",
@@ -140,6 +136,10 @@ describe("MCP endpoint", () => {
     ).result.tools;
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_feeds",
+      "list_webhook_keys",
+      "add_feed",
+      "update_feed",
+      "remove_feed",
       "preview_feed",
       "list_unseen_items",
       "publish_new_items",
@@ -162,15 +162,55 @@ describe("MCP endpoint", () => {
     ).result;
     expect(result.structuredContent.feeds).toEqual([
       {
+        id: "hatena-it",
         postTitle: "はてブ IT",
         rssUrl: "https://b.hatena.ne.jp/hotentry/it.rss",
+        webhookKey: "IT",
+        enabled: true,
       },
       {
+        id: "wired-japan",
         postTitle: "WIRED Japan",
         rssUrl: "https://wired.jp/feed/rss",
+        webhookKey: "SCIENCE",
+        enabled: true,
       },
     ]);
     expect(called.text).not.toContain("discord.example");
+  });
+
+  it("does not return webhook URLs from feed registration tools", async () => {
+    const bucket = memoryKv();
+    const env = baseEnv({
+      RSS_FEED_WORKER_KV: bucket.kv as unknown as Env["RSS_FEED_WORKER_KV"],
+      DISCORD_WEBHOOK_URL_IT: "https://discord.example/super-secret-webhook",
+    });
+    vi.spyOn(rss, "fetchFeed").mockImplementation(async () => {
+      return new Response("ok", { status: 200 });
+    });
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
+    vi.spyOn(rss, "extractItems").mockResolvedValue([]);
+    const keys = await rpc(env, "tools/call", {
+      name: "list_webhook_keys",
+      arguments: {},
+    });
+    const added = await rpc(env, "tools/call", {
+      name: "add_feed",
+      arguments: {
+        postTitle: "Extra",
+        rssUrl: "http://127.0.0.1/rss",
+        webhookKey: "IT",
+      },
+    });
+    const listed = await rpc(env, "tools/call", {
+      name: "list_feeds",
+      arguments: {},
+    });
+    const combined = `${keys.text}\n${added.text}\n${listed.text}`;
+    expect(combined).not.toContain("super-secret-webhook");
+    expect(added.text).toContain("https");
+    expect(rss.fetchFeed).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   it("previews a feed without writing KV or calling Discord", async () => {
@@ -188,12 +228,9 @@ describe("MCP endpoint", () => {
     vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
     vi.spyOn(rss, "extractItems").mockResolvedValue(items);
     const webhook = vi.spyOn(discord, "sendDiscordWebhook");
-    const put = vi.fn();
+    const bucket = memoryKv();
     const env = baseEnv({
-      RSS_FEED_WORKER_KV: {
-        get: async () => new Map(),
-        put,
-      } as unknown as Env["RSS_FEED_WORKER_KV"],
+      RSS_FEED_WORKER_KV: bucket.kv as unknown as Env["RSS_FEED_WORKER_KV"],
     });
 
     const called = await rpc(env, "tools/call", {
@@ -213,7 +250,7 @@ describe("MCP endpoint", () => {
     expect(result.structuredContent.total).toBe(1);
     expect(result.structuredContent.items[0]?.title).toBe("新しい記事");
     expect(webhook).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(bucket.puts).toEqual([]);
     vi.restoreAllMocks();
   });
 
@@ -237,16 +274,9 @@ describe("MCP endpoint", () => {
     );
     vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
     vi.spyOn(rss, "extractItems").mockResolvedValue(items);
-    const put = vi.fn();
+    const bucket = memoryKv({ "hash-old": "cached" });
     const env = baseEnv({
-      RSS_FEED_WORKER_KV: {
-        get: async (keys: string[]) => {
-          return new Map(
-            keys.map((key) => [key, key === "hash-old" ? "cached" : null]),
-          );
-        },
-        put,
-      } as unknown as Env["RSS_FEED_WORKER_KV"],
+      RSS_FEED_WORKER_KV: bucket.kv as unknown as Env["RSS_FEED_WORKER_KV"],
     });
 
     const called = await rpc(env, "tools/call", {
@@ -265,7 +295,7 @@ describe("MCP endpoint", () => {
         linkHash: "hash-new",
       },
     ]);
-    expect(put).not.toHaveBeenCalled();
+    expect(bucket.puts).toEqual([]);
     vi.restoreAllMocks();
   });
 
@@ -432,13 +462,10 @@ describe("MCP endpoint", () => {
   });
 
   it("reports load failures without posting or marking items seen", async () => {
-    const put = vi.fn();
+    const bucket = memoryKv();
     const webhook = vi.spyOn(discord, "sendDiscordWebhook");
     const env = baseEnv({
-      RSS_FEED_WORKER_KV: {
-        get: async () => new Map(),
-        put,
-      } as unknown as Env["RSS_FEED_WORKER_KV"],
+      RSS_FEED_WORKER_KV: bucket.kv as unknown as Env["RSS_FEED_WORKER_KV"],
     });
     vi.spyOn(rss, "fetchFeed").mockResolvedValue(
       new Response("down", { status: 500 }),
@@ -496,19 +523,16 @@ describe("MCP endpoint", () => {
     });
     expect(publishedResult.content[0]?.text).not.toContain("既読として");
     expect(webhook).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(bucket.puts).toEqual([]);
     vi.restoreAllMocks();
   });
 
   it("rejects an empty feed name before touching the network", async () => {
     const fetchFeed = vi.spyOn(rss, "fetchFeed");
     const webhook = vi.spyOn(discord, "sendDiscordWebhook");
-    const put = vi.fn();
+    const bucket = memoryKv();
     const env = baseEnv({
-      RSS_FEED_WORKER_KV: {
-        get: async () => new Map(),
-        put,
-      } as unknown as Env["RSS_FEED_WORKER_KV"],
+      RSS_FEED_WORKER_KV: bucket.kv as unknown as Env["RSS_FEED_WORKER_KV"],
     });
 
     for (const feed of ["", "   ", "https://evil.example/rss.xml"]) {
@@ -529,7 +553,7 @@ describe("MCP endpoint", () => {
 
     expect(fetchFeed).not.toHaveBeenCalled();
     expect(webhook).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(bucket.puts).toEqual([]);
     vi.restoreAllMocks();
   });
 
@@ -538,14 +562,18 @@ describe("MCP endpoint", () => {
       return new Response("ok", { status: 200 });
     });
     vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
-    vi.spyOn(rss, "extractItems").mockResolvedValue([
-      {
-        title: "全件",
-        link: "https://example.com/all",
-        linkHash: "hash-all",
-        id: undefined,
-      },
-    ]);
+    let feedNumber = 0;
+    vi.spyOn(rss, "extractItems").mockImplementation(async () => {
+      feedNumber += 1;
+      return [
+        {
+          title: "全件",
+          link: `https://example.com/all-${feedNumber}`,
+          linkHash: `hash-all-${feedNumber}`,
+          id: undefined,
+        },
+      ];
+    });
     const destinations: string[] = [];
     vi.spyOn(discord, "sendDiscordWebhook").mockImplementation(
       async (url: string) => {

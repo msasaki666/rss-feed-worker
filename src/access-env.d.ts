@@ -12,5 +12,10 @@ declare namespace Cloudflare {
      * 本番には設定しない。Access の設定がある場合は無視され、JWT 検証が優先される。
      */
     MCP_ALLOW_UNAUTHENTICATED?: string;
+    /**
+     * 追加の Discord Webhook。`{"ALIAS":"https://discord.com/api/webhooks/..."}`。
+     * `IT` と `SCIENCE` は DISCORD_WEBHOOK_URL_IT / DISCORD_WEBHOOK_URL_SCIENCE が優先される。
+     */
+    DISCORD_WEBHOOKS?: string;
   }
 }

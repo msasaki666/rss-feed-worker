@@ -27,7 +27,7 @@ This is a Cloudflare Worker that monitors RSS feeds and sends new articles to Di
 **Key Data Structures**:
 
 - `TargetOption` interface defines RSS feed configuration with title, RSS URL, and Discord webhook
-- `targetOptions` array contains hardcoded feed configurations for IT news and Science feeds
+- Feed definitions live in KV key `feed:v1:catalog` and reference Discord webhooks by alias (`IT`, `SCIENCE`, or `DISCORD_WEBHOOKS`)
 - Uses SHA-256 hashes of article URLs as unique identifiers
 
 ### External Dependencies

@@ -3,14 +3,26 @@ import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import { authorizeMcpRequest } from "./access";
 import { loadFeedItems, partitionUnseen, processFeed } from "./feed-processor";
-import { getFeedTargets, toPublicFeed } from "./feeds";
+import type { StoredFeed } from "./feed-store";
+import {
+  addFeed,
+  getEnabledFeedTargets,
+  listWebhookKeys,
+  loadCatalog,
+  removeFeed,
+  resolveWebhookUrl,
+  toPublicFeed,
+  updateFeed,
+} from "./feed-store";
+import type { FeedTarget } from "./feeds";
 import type { ExtractedItem } from "./rss";
 
 const SERVER_INSTRUCTIONS = [
-  "設定済み RSS フィードの確認と、未読記事の Discord 通知に使う。",
-  "Webhook URL やその他の秘密は返さない。任意の URL は取得できない。",
-  "先に list_feeds で postTitle を確認する。",
+  "設定済み RSS フィードの確認、登録、未読記事の Discord 通知に使う。",
+  "Webhook の URL は返さない。フィードは webhookKey で secret の別名を指す。",
+  "先に list_feeds と list_webhook_keys を確認する。",
   "preview_feed と list_unseen_items は読み取り専用で、既読にはしない。",
+  "add_feed と、rssUrl を変える update_feed は、既定で今ある記事を投稿せず既読にする。",
   "publish_new_items は Discord に投稿し、投稿できた記事を 10 日間既読として保存する。",
 ].join("\n");
 
@@ -19,7 +31,7 @@ const MAX_LIMIT = 50;
 
 const feedNameSchema = z
   .string()
-  .describe("list_feeds が返す postTitle。例: はてブ IT");
+  .describe("list_feeds の id または postTitle。例: hatena-it、はてブ IT");
 
 const limitSchema = z
   .number()
@@ -69,52 +81,67 @@ const pageItems = (items: ExtractedItem[], limit: number | undefined) => {
   };
 };
 
-const findTarget = (env: Env, feed: string) => {
+const findStored = async (env: Env, feed: string) => {
   const name = feed.trim();
-  const targets = getFeedTargets(env);
-  const target = targets.find((item) => {
-    return item.postTitle === name;
+  const feeds = await loadCatalog(env);
+  const stored = feeds.find((item) => {
+    return item.id === name || item.postTitle === name;
   });
-  if (target) {
-    return { target, targets };
+  if (stored) {
+    return { stored, feeds };
   }
-  const names = targets
+  const names = feeds
     .map((item) => {
-      return item.postTitle;
+      return `${item.id} (${item.postTitle})`;
     })
     .join(", ");
   return {
-    target: undefined,
-    targets,
-    message: `未知のフィード「${name}」です。使える postTitle: ${names}`,
+    stored: undefined,
+    feeds,
+    message: `未知のフィード「${name}」です。使えるフィード: ${names}`,
+  };
+};
+
+const toProcessTarget = (
+  env: Env,
+  stored: StoredFeed,
+): FeedTarget | undefined => {
+  const discordWebhookUrl = resolveWebhookUrl(env, stored.webhookKey);
+  if (!discordWebhookUrl) {
+    return undefined;
+  }
+  return {
+    postTitle: stored.postTitle,
+    rssUrl: stored.rssUrl,
+    discordWebhookUrl,
   };
 };
 
 const readFeed = async (env: Env, feed: string, limit: number | undefined) => {
-  const found = findTarget(env, feed);
-  if (!found.target) {
+  const found = await findStored(env, feed);
+  if (!found.stored) {
     return errorResult(found.message ?? "未知のフィードです。");
   }
   try {
     const loaded = await loadFeedItems(
-      found.target.rssUrl,
-      found.target.postTitle,
+      found.stored.rssUrl,
+      found.stored.postTitle,
     );
     if (!loaded.ok) {
       return errorResult(
         loaded.status === "fetch_failed"
-          ? `${found.target.postTitle} の取得に失敗しました (HTTP ${loaded.httpStatus})。既読にはしていません。`
-          : `${found.target.postTitle} の RSS を解釈できませんでした。既読にはしていません。`,
+          ? `${found.stored.postTitle} の取得に失敗しました (HTTP ${loaded.httpStatus})。既読にはしていません。`
+          : `${found.stored.postTitle} の RSS を解釈できませんでした。既読にはしていません。`,
       );
     }
     return jsonResult({
-      feed: toPublicFeed(found.target),
+      feed: toPublicFeed(found.stored),
       ...pageItems(loaded.items, limit),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     return errorResult(
-      `${found.target.postTitle} の取得に失敗しました: ${message}`,
+      `${found.stored.postTitle} の取得に失敗しました: ${message}`,
     );
   }
 };
@@ -134,7 +161,7 @@ export const createRssMcpServer = (env: Env): McpServer => {
     {
       title: "フィード一覧",
       description:
-        "監視対象の RSS フィード名と URL を返す。Discord Webhook は含まない。ネットワークアクセスも既読の更新もしない。他のツールに渡す postTitle を確認するために最初に呼ぶ。",
+        "保存済みフィードの id、名前、RSS URL、webhookKey、enabled を返す。Webhook URL は含まない。既読の更新もしない。",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -143,11 +170,129 @@ export const createRssMcpServer = (env: Env): McpServer => {
       },
     },
     async () => {
+      const feeds = await loadCatalog(env);
       return jsonResult({
-        feeds: getFeedTargets(env).map((target) => {
-          return toPublicFeed(target);
+        feeds: feeds.map((feed) => {
+          return toPublicFeed(feed);
         }),
       });
+    },
+  );
+
+  server.registerTool(
+    "list_webhook_keys",
+    {
+      title: "Webhook の別名一覧",
+      description:
+        "フィードに指定できる webhookKey の名前だけを返す。URL は返さない。新しい別名は Worker の secret に追加する。",
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      return jsonResult({ keys: listWebhookKeys(env) });
+    },
+  );
+
+  server.registerTool(
+    "add_feed",
+    {
+      title: "フィードを追加",
+      description:
+        "RSS URL が https で、取得して RSS/Atom として解釈できるときだけ保存する。webhookKey は list_webhook_keys の名前。URL 自体は受け取らない。既定では現在の記事を Discord に投稿せず既読にする。",
+      inputSchema: z.object({
+        id: z
+          .string()
+          .optional()
+          .describe("省略すると自動で付く。小文字、数字、ハイフン。"),
+        postTitle: z.string().describe("Discord に出すフィード名。"),
+        rssUrl: z.string().describe("https の RSS/Atom URL。"),
+        webhookKey: z.string().describe("投稿先の別名。例: IT、SCIENCE。"),
+        enabled: z
+          .boolean()
+          .optional()
+          .describe("省略時は true。false だと Cron の対象外。"),
+        markCurrentAsSeen: z
+          .boolean()
+          .optional()
+          .describe(
+            "省略時は true。false だと次の投稿で現在の記事も新規になる。",
+          ),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) => {
+      const result = await addFeed(env, input);
+      if (!result.ok) {
+        return errorResult(result.message);
+      }
+      return jsonResult({ feed: result.feed, marked: result.marked });
+    },
+  );
+
+  server.registerTool(
+    "update_feed",
+    {
+      title: "フィードを更新",
+      description:
+        "id で指定したフィードの名前、RSS URL、webhookKey、enabled を変える。rssUrl を変えたときは、解釈できる場合だけ保存し、既定で新しい URL の現在の記事を投稿せず既読にする。",
+      inputSchema: z.object({
+        id: z.string().describe("list_feeds の id。"),
+        postTitle: z.string().optional(),
+        rssUrl: z.string().optional(),
+        webhookKey: z.string().optional(),
+        enabled: z.boolean().optional(),
+        markCurrentAsSeen: z
+          .boolean()
+          .optional()
+          .describe("rssUrl を変えたときの既定は true。"),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (input) => {
+      const result = await updateFeed(env, input);
+      if (!result.ok) {
+        return errorResult(result.message);
+      }
+      return jsonResult({ feed: result.feed, marked: result.marked });
+    },
+  );
+
+  server.registerTool(
+    "remove_feed",
+    {
+      title: "フィードを削除",
+      description:
+        "id のフィード定義を消す。既読ハッシュは残るので、同じ記事 URL を別フィードで見ても再投稿しない。",
+      inputSchema: z.object({
+        id: z.string().describe("list_feeds の id。"),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id }) => {
+      const result = await removeFeed(env, id);
+      if (!result.ok) {
+        return errorResult(result.message);
+      }
+      return jsonResult({ id: result.id });
     },
   );
 
@@ -191,20 +336,20 @@ export const createRssMcpServer = (env: Env): McpServer => {
       },
     },
     async ({ feed, limit }) => {
-      const found = findTarget(env, feed);
-      if (!found.target) {
+      const found = await findStored(env, feed);
+      if (!found.stored) {
         return errorResult(found.message ?? "未知のフィードです。");
       }
       try {
         const loaded = await loadFeedItems(
-          found.target.rssUrl,
-          found.target.postTitle,
+          found.stored.rssUrl,
+          found.stored.postTitle,
         );
         if (!loaded.ok) {
           return errorResult(
             loaded.status === "fetch_failed"
-              ? `${found.target.postTitle} の取得に失敗しました (HTTP ${loaded.httpStatus})。既読にはしていません。`
-              : `${found.target.postTitle} の RSS を解釈できませんでした。既読にはしていません。`,
+              ? `${found.stored.postTitle} の取得に失敗しました (HTTP ${loaded.httpStatus})。既読にはしていません。`
+              : `${found.stored.postTitle} の RSS を解釈できませんでした。既読にはしていません。`,
           );
         }
         const { unseen } = await partitionUnseen(
@@ -212,14 +357,14 @@ export const createRssMcpServer = (env: Env): McpServer => {
           env.RSS_FEED_WORKER_KV,
         );
         return jsonResult({
-          feed: toPublicFeed(found.target),
+          feed: toPublicFeed(found.stored),
           ...pageItems(unseen, limit),
         });
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "unknown error";
         return errorResult(
-          `${found.target.postTitle} の未読確認に失敗しました: ${message}`,
+          `${found.stored.postTitle} の未読確認に失敗しました: ${message}`,
         );
       }
     },
@@ -230,7 +375,7 @@ export const createRssMcpServer = (env: Env): McpServer => {
     {
       title: "新着記事を Discord に投稿",
       description:
-        "Cron と同じ処理を実行する。未読記事を対象フィードの Discord Webhook に投稿し、投稿できた URL を 10 日間既読として KV に保存する。feed を省略すると設定済みフィードをすべて処理する。既に既読の記事は再投稿しない。読み取りだけなら preview_feed か list_unseen_items を使う。",
+        "Cron と同じ処理を実行する。未読記事を対象フィードの Discord Webhook に投稿し、投稿できた URL を 10 日間既読として KV に保存する。feed を省略すると有効なフィードをすべて処理する。無効なフィードは id を指定したときだけ処理する。",
       inputSchema: z.object({
         feed: feedNameSchema
           .optional()
@@ -246,16 +391,24 @@ export const createRssMcpServer = (env: Env): McpServer => {
     async ({ feed }) => {
       if (feed !== undefined && feed.trim().length === 0) {
         return errorResult(
-          "feed が空です。省略するか、list_feeds の postTitle を指定してください。",
+          "feed が空です。省略するか、list_feeds の id か postTitle を指定してください。",
         );
       }
-      let targets = getFeedTargets(env);
-      if (feed !== undefined) {
-        const found = findTarget(env, feed);
-        if (!found.target) {
+      let targets: FeedTarget[] = [];
+      if (feed === undefined) {
+        targets = await getEnabledFeedTargets(env);
+      } else {
+        const found = await findStored(env, feed);
+        if (!found.stored) {
           return errorResult(found.message ?? "未知のフィードです。");
         }
-        targets = [found.target];
+        const target = toProcessTarget(env, found.stored);
+        if (!target) {
+          return errorResult(
+            `webhookKey「${found.stored.webhookKey}」は設定されていません。`,
+          );
+        }
+        targets = [target];
       }
 
       const results = [];
