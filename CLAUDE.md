@@ -20,8 +20,9 @@ This is a Cloudflare Worker that monitors RSS feeds and sends new articles to Di
 **Main Entry Point (`src/index.ts`)**:
 
 - `handleScheduled()` - Main scheduled handler that processes all RSS feeds
-- `confirmRss()` - Core function that fetches RSS feed, checks for new items, and sends Discord notifications
-- `handleFetch()` - HTTP handler (disabled in production unless `ENABLE_HTTP_REQUEST=true`)
+- `processFeed()` - Fetches one RSS feed, checks for new items, and sends Discord notifications
+- `handleFetch()` - HTTP handler for paths other than `/mcp` (the hint response is off unless `ENABLE_HTTP_REQUEST=true`)
+- `handleMcpRequest()` - Streamable HTTP MCP server at `/mcp`. Requires an Access JWT unless `MCP_ALLOW_UNAUTHENTICATED=true` and the Access settings are unset
 
 **Key Data Structures**:
 
@@ -38,8 +39,9 @@ This is a Cloudflare Worker that monitors RSS feeds and sends new articles to Di
 ### Cloudflare Integrations
 
 - **KV Storage**: `RSS_FEED_WORKER_KV` namespace stores processed article hashes (10-day TTL)
-- **Environment Variables**: Discord webhook URLs and feature flags
-- **Cron Triggers**: Configured for "0 23,3,7 * * *" (8:00, 12:00, 16:00 JST)
+- **Environment Variables**: Discord webhook URLs, feature flags, and optional Access JWT settings (`ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`)
+- **Cron Triggers**: See `wrangler.jsonc` (`0 23 * * *`, 8:00 JST)
+- **nodejs_compat**: Required by the Agents SDK MCP handler (`node:async_hooks`)
 
 ## Configuration Files
 
