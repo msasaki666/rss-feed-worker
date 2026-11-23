@@ -445,9 +445,9 @@ export const addFeed = async (
     enabled: input.enabled ?? true,
   };
   feeds.push(feed);
-  await writeCatalog(env, feeds);
   const marked =
     (input.markCurrentAsSeen ?? true) ? await markSeen(env, loaded.items) : 0;
+  await writeCatalog(env, feeds);
   return { ok: true, feed: toPublicFeed(feed), marked };
 };
 
@@ -521,9 +521,9 @@ export const updateFeed = async (
     enabled: input.enabled ?? current.enabled,
   };
   feeds[index] = next;
-  await writeCatalog(env, feeds);
   const shouldMark = urlChanged && (input.markCurrentAsSeen ?? true);
   const marked = shouldMark ? await markSeen(env, loadedItems) : 0;
+  await writeCatalog(env, feeds);
   return { ok: true, feed: toPublicFeed(next), marked };
 };
 

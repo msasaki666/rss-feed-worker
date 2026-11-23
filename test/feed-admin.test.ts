@@ -146,6 +146,38 @@ describe("feed catalog", () => {
     vi.restoreAllMocks();
   });
 
+  it("writes seen hashes before the new catalog is visible", async () => {
+    const bucket = memoryKv();
+    const env = envFor(bucket);
+    parsedFeed();
+    bucket.puts.length = 0;
+    const added = await addFeed(env, {
+      id: "example",
+      postTitle: "Example",
+      rssUrl: "https://example.com/rss.xml",
+      webhookKey: "IT",
+    });
+    expect(added.ok).toBe(true);
+    const addedKeys = bucket.puts.map((put) => put.key);
+    expect(addedKeys.indexOf("hash-current")).toBeGreaterThanOrEqual(0);
+    expect(addedKeys.indexOf("hash-current")).toBeLessThan(
+      addedKeys.lastIndexOf(CATALOG_KEY),
+    );
+
+    bucket.puts.length = 0;
+    const updated = await updateFeed(env, {
+      id: "hatena-it",
+      rssUrl: "https://example.com/moved.xml",
+    });
+    expect(updated.ok).toBe(true);
+    const updatedKeys = bucket.puts.map((put) => put.key);
+    expect(updatedKeys.indexOf("hash-current")).toBeGreaterThanOrEqual(0);
+    expect(updatedKeys.indexOf("hash-current")).toBeLessThan(
+      updatedKeys.lastIndexOf(CATALOG_KEY),
+    );
+    vi.restoreAllMocks();
+  });
+
   it("skips disabled feeds and feeds with an unknown webhook key", async () => {
     const bucket = memoryKv();
     const env = envFor(bucket);
