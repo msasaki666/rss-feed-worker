@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as discord from "../src/discord";
 import * as rss from "../src/rss";
 import { memoryKv } from "./memory-kv";
+import { IT_WEBHOOK_URL, SCIENCE_WEBHOOK_URL } from "./webhook-fixtures";
 
 vi.mock("cloudflare:workers", () => ({ env: {} }));
 
@@ -222,8 +223,8 @@ describe("processFeed", () => {
     );
     const env = {
       RSS_FEED_WORKER_KV: memoryKv().kv as unknown as Env["RSS_FEED_WORKER_KV"],
-      DISCORD_WEBHOOK_URL_IT: "https://discord.example/it",
-      DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science",
+      DISCORD_WEBHOOK_URL_IT: IT_WEBHOOK_URL,
+      DISCORD_WEBHOOK_URL_SCIENCE: SCIENCE_WEBHOOK_URL,
       DISCORD_WEBHOOK_URL_NOTEBOOKLM: "",
     } as unknown as Env;
 
@@ -249,8 +250,8 @@ describe("processFeed", () => {
     );
     expect(rss.fetchFeed).toHaveBeenCalledWith("https://wired.jp/feed/rss");
     expect(rss.fetchFeed).toHaveBeenCalledTimes(2);
-    expect(destinations).toContain("https://discord.example/it");
-    expect(destinations).toContain("https://discord.example/science");
+    expect(destinations).toContain(IT_WEBHOOK_URL);
+    expect(destinations).toContain(SCIENCE_WEBHOOK_URL);
     vi.restoreAllMocks();
   });
 
@@ -258,8 +259,8 @@ describe("processFeed", () => {
     const bucket = memoryKv();
     const env = {
       RSS_FEED_WORKER_KV: bucket.kv,
-      DISCORD_WEBHOOK_URL_IT: "https://discord.example/it",
-      DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science",
+      DISCORD_WEBHOOK_URL_IT: IT_WEBHOOK_URL,
+      DISCORD_WEBHOOK_URL_SCIENCE: SCIENCE_WEBHOOK_URL,
       DISCORD_WEBHOOK_URL_NOTEBOOKLM: "",
     } as unknown as Env;
     const { updateFeed } = await import("../src/feed-store");
@@ -303,8 +304,8 @@ describe("processFeed", () => {
     );
     expect(urls).toContain("https://b.hatena.ne.jp/hotentry/it.rss");
     expect(urls).not.toContain("https://wired.jp/feed/rss");
-    expect(destinations).toContain("https://discord.example/it");
-    expect(destinations).not.toContain("https://discord.example/science");
+    expect(destinations).toContain(IT_WEBHOOK_URL);
+    expect(destinations).not.toContain(SCIENCE_WEBHOOK_URL);
     vi.restoreAllMocks();
   });
 });

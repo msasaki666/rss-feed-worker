@@ -10,6 +10,12 @@ import {
   TEST_TEAM_DOMAIN,
 } from "./access-fixture";
 import { memoryKv } from "./memory-kv";
+import { IT_WEBHOOK_URL, SCIENCE_WEBHOOK_URL } from "./webhook-fixtures";
+
+const MIGRATION_KEYS = new Set([
+  "feed:v1:webhooks",
+  "feed:v1:webhooks-migrated",
+]);
 
 vi.mock("cloudflare:workers", () => ({ env: {} }));
 
@@ -21,8 +27,8 @@ const ctx = {
 const baseEnv = (overrides: Partial<Env> = {}): Env => {
   return {
     RSS_FEED_WORKER_KV: memoryKv().kv as unknown as Env["RSS_FEED_WORKER_KV"],
-    DISCORD_WEBHOOK_URL_IT: "https://discord.example/it-secret",
-    DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science-secret",
+    DISCORD_WEBHOOK_URL_IT: IT_WEBHOOK_URL,
+    DISCORD_WEBHOOK_URL_SCIENCE: SCIENCE_WEBHOOK_URL,
     DISCORD_WEBHOOK_URL_NOTEBOOKLM: "https://discord.example/list-secret",
     ENABLE_HTTP_REQUEST: "false",
     ACCESS_TEAM_DOMAIN: "",
@@ -252,7 +258,9 @@ describe("MCP endpoint", () => {
     expect(result.structuredContent.total).toBe(1);
     expect(result.structuredContent.items[0]?.title).toBe("新しい記事");
     expect(webhook).not.toHaveBeenCalled();
-    expect(bucket.puts).toEqual([]);
+    expect(
+      bucket.puts.map((put) => put.key).every((key) => MIGRATION_KEYS.has(key)),
+    ).toBe(true);
     vi.restoreAllMocks();
   });
 
@@ -297,7 +305,9 @@ describe("MCP endpoint", () => {
         linkHash: "hash-new",
       },
     ]);
-    expect(bucket.puts).toEqual([]);
+    expect(
+      bucket.puts.map((put) => put.key).every((key) => MIGRATION_KEYS.has(key)),
+    ).toBe(true);
     vi.restoreAllMocks();
   });
 
@@ -342,7 +352,7 @@ describe("MCP endpoint", () => {
       "投稿する",
     );
     expect(webhook).toHaveBeenCalledWith(
-      "https://discord.example/it-secret",
+      IT_WEBHOOK_URL,
       "**はてブ IT | 投稿する**\n\nhttps://example.com/post",
     );
     expect(called.text).not.toContain("discord.example");
@@ -525,7 +535,9 @@ describe("MCP endpoint", () => {
     });
     expect(publishedResult.content[0]?.text).not.toContain("既読として");
     expect(webhook).not.toHaveBeenCalled();
-    expect(bucket.puts).toEqual([]);
+    expect(
+      bucket.puts.map((put) => put.key).every((key) => MIGRATION_KEYS.has(key)),
+    ).toBe(true);
     vi.restoreAllMocks();
   });
 
@@ -555,7 +567,9 @@ describe("MCP endpoint", () => {
 
     expect(fetchFeed).not.toHaveBeenCalled();
     expect(webhook).not.toHaveBeenCalled();
-    expect(bucket.puts).toEqual([]);
+    expect(
+      bucket.puts.map((put) => put.key).every((key) => MIGRATION_KEYS.has(key)),
+    ).toBe(true);
     vi.restoreAllMocks();
   });
 
@@ -600,8 +614,8 @@ describe("MCP endpoint", () => {
       "https://b.hatena.ne.jp/hotentry/it.rss",
     );
     expect(rss.fetchFeed).toHaveBeenCalledWith("https://wired.jp/feed/rss");
-    expect(destinations).toContain("https://discord.example/it-secret");
-    expect(destinations).toContain("https://discord.example/science-secret");
+    expect(destinations).toContain(IT_WEBHOOK_URL);
+    expect(destinations).toContain(SCIENCE_WEBHOOK_URL);
     expect(destinations).not.toContain("https://evil.example/rss.xml");
     vi.restoreAllMocks();
   });
@@ -686,7 +700,7 @@ describe("MCP endpoint", () => {
       arguments: { feed: "はてブ IT" },
     });
     const individual = publishWebhook.mock.calls.filter((call) => {
-      return call[0] === "https://discord.example/it-secret";
+      return call[0] === IT_WEBHOOK_URL;
     });
     expect(individual).toHaveLength(21);
     vi.restoreAllMocks();
@@ -728,7 +742,7 @@ describe("MCP endpoint", () => {
     expect(urls).toContain("https://b.hatena.ne.jp/hotentry/it.rss");
     expect(urls).not.toContain("https://wired.jp/feed/rss");
     expect(webhook.mock.calls.map((call) => call[0])).not.toContain(
-      "https://discord.example/science-secret",
+      SCIENCE_WEBHOOK_URL,
     );
 
     urls.length = 0;
@@ -739,7 +753,7 @@ describe("MCP endpoint", () => {
     });
     expect(urls).toEqual(["https://wired.jp/feed/rss"]);
     expect(webhook.mock.calls.map((call) => call[0])).toContain(
-      "https://discord.example/science-secret",
+      SCIENCE_WEBHOOK_URL,
     );
     vi.restoreAllMocks();
   });

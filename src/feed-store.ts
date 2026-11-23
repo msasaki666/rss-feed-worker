@@ -5,6 +5,7 @@ import { validateWebhookUrl, webhookHint } from "./webhook-url";
 
 export const CATALOG_KEY = "feed:v1:catalog";
 export const WEBHOOKS_KEY = "feed:v1:webhooks";
+export const WEBHOOK_MIGRATION_KEY = "feed:v1:webhooks-migrated";
 
 const WEBHOOK_KEY = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const FEED_ID = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -84,14 +85,57 @@ export interface PublicWebhook {
   hint: string;
 }
 
-const builtinWebhook = (env: WebhookEnv, name: string): string | undefined => {
-  if (name === "IT") {
-    return nonempty(env.DISCORD_WEBHOOK_URL_IT);
+const legacySecret = (
+  env: WebhookEnv,
+  name: "IT" | "SCIENCE",
+): string | undefined => {
+  return nonempty(
+    name === "IT"
+      ? env.DISCORD_WEBHOOK_URL_IT
+      : env.DISCORD_WEBHOOK_URL_SCIENCE,
+  );
+};
+
+export const ensureWebhookMigration = async (
+  env: FeedWriteEnv,
+): Promise<void> => {
+  const marker = await env.RSS_FEED_WORKER_KV.get(WEBHOOK_MIGRATION_KEY);
+  if (marker !== null) {
+    return;
   }
-  if (name === "SCIENCE") {
-    return nonempty(env.DISCORD_WEBHOOK_URL_SCIENCE);
+  const additions: Record<string, string> = {};
+  const registry = await loadWebhookRegistry(env);
+  for (const name of ["IT", "SCIENCE"] as const) {
+    if (registry[name]) {
+      continue;
+    }
+    const secret = legacySecret(env, name);
+    if (!secret) {
+      continue;
+    }
+    const checked = validateWebhookUrl(secret);
+    if (!checked.ok) {
+      continue;
+    }
+    additions[name] = checked.url;
   }
-  return undefined;
+  if (Object.keys(additions).length > 0) {
+    const latest = await loadWebhookRegistry(env);
+    let changed = false;
+    for (const [name, url] of Object.entries(additions)) {
+      if (!latest[name]) {
+        latest[name] = url;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await writeWebhookRegistry(env, latest);
+    }
+  }
+  const markerNow = await env.RSS_FEED_WORKER_KV.get(WEBHOOK_MIGRATION_KEY);
+  if (markerNow === null) {
+    await env.RSS_FEED_WORKER_KV.put(WEBHOOK_MIGRATION_KEY, "1");
+  }
 };
 
 const readWebhookRegistry = (raw: string | null): Record<string, string> => {
@@ -128,30 +172,20 @@ const writeWebhookRegistry = async (
 export const knownWebhookSecrets = async (
   env: FeedWriteEnv,
 ): Promise<string[]> => {
+  await ensureWebhookMigration(env);
   const registry = await loadWebhookRegistry(env);
-  return [
-    env.DISCORD_WEBHOOK_URL_IT,
-    env.DISCORD_WEBHOOK_URL_SCIENCE,
-    ...Object.values(registry),
-  ].filter((value): value is string => {
-    return typeof value === "string" && value.trim().length > 0;
+  return Object.values(registry).filter((value) => {
+    return value.trim().length > 0;
   });
 };
 
 export const listWebhookKeys = async (
   env: FeedWriteEnv,
 ): Promise<PublicWebhook[]> => {
+  await ensureWebhookMigration(env);
   const registry = await loadWebhookRegistry(env);
-  const names = new Set<string>(Object.keys(registry));
-  if (nonempty(env.DISCORD_WEBHOOK_URL_IT)) {
-    names.add("IT");
-  }
-  if (nonempty(env.DISCORD_WEBHOOK_URL_SCIENCE)) {
-    names.add("SCIENCE");
-  }
-  return [...names].map((name) => {
-    const url = registry[name] ?? builtinWebhook(env, name) ?? "";
-    return { name, hint: webhookHint(url) };
+  return Object.keys(registry).map((name) => {
+    return { name, hint: webhookHint(registry[name] ?? "") };
   });
 };
 
@@ -159,8 +193,9 @@ export const resolveWebhookUrl = async (
   env: FeedWriteEnv,
   webhookKey: string,
 ): Promise<string | undefined> => {
+  await ensureWebhookMigration(env);
   const registry = await loadWebhookRegistry(env);
-  return nonempty(registry[webhookKey]) ?? builtinWebhook(env, webhookKey);
+  return nonempty(registry[webhookKey]);
 };
 
 export const setWebhook = async (
@@ -176,6 +211,7 @@ export const setWebhook = async (
   if (!checked.ok) {
     return { ok: false, message: checked.message };
   }
+  await ensureWebhookMigration(env);
   const registry = await loadWebhookRegistry(env);
   registry[key] = checked.url;
   await writeWebhookRegistry(env, registry);
@@ -187,14 +223,9 @@ export const removeWebhook = async (
   name: string,
 ): Promise<{ ok: true; name: string } | FeedMutationError> => {
   const key = name.trim();
+  await ensureWebhookMigration(env);
   const registry = await loadWebhookRegistry(env);
   if (!(key in registry)) {
-    if (builtinWebhook(env, key)) {
-      return {
-        ok: false,
-        message: `「${key}」は Worker secret なのでここからは削除できません。`,
-      };
-    }
     return { ok: false, message: `Webhook「${key}」はありません。` };
   }
   const feeds = await loadCatalog(env);
@@ -205,7 +236,7 @@ export const removeWebhook = async (
     .map((feed) => {
       return feed.id;
     });
-  if (usedBy.length > 0 && !builtinWebhook(env, key)) {
+  if (usedBy.length > 0) {
     return {
       ok: false,
       message: `Webhook「${key}」は ${usedBy.join(", ")} が使っています。`,

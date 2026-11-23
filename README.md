@@ -47,23 +47,23 @@ Cloudflare Workers を使って複数の RSS フィードを監視し、新着�
 
 定義は KV の `feed:v1:catalog` にまとめて保存します。既読の記事ハッシュと同じ名前空間ですが、キーは重なりません。初回の読み出しでカタログが無いときだけ、これまでコードに書いてあった 2 件を作ります。全部削除したあとは作り直しません。
 
-| 項目         | 内容                                                                          |
-| ------------ | ----------------------------------------------------------------------------- |
-| `id`         | 更新と削除に使う安定した ID。省略すると自動で付きます                         |
-| `postTitle`  | Discord に出す名前                                                            |
-| `rssUrl`     | https の RSS/Atom。localhost、`.local`、IP アドレスそのものは拒否します       |
-| `webhookKey` | 登録済み Webhook の名前。`IT` と `SCIENCE` は既存 secret にフォールバックする |
-| `webhookUrl` | 追加・更新時だけ渡す Discord の Webhook URL。KV に保存し、応答には出さない    |
-| `enabled`    | `false` のフィードは Cron と、`feed` を省略した投稿から外れます               |
+| 項目         | 内容                                                                       |
+| ------------ | -------------------------------------------------------------------------- |
+| `id`         | 更新と削除に使う安定した ID。省略すると自動で付きます                      |
+| `postTitle`  | Discord に出す名前                                                         |
+| `rssUrl`     | https の RSS/Atom。localhost、`.local`、IP アドレスそのものは拒否します    |
+| `webhookKey` | 登録済み Webhook の名前。`IT` と `SCIENCE` は初回移行で KV に写した名前    |
+| `webhookUrl` | 追加・更新時だけ渡す Discord の Webhook URL。KV に保存し、応答には出さない |
+| `enabled`    | `false` のフィードは Cron と、`feed` を省略した投稿から外れます            |
 
 Webhook URL はどのツールの応答にも出しません。`list_webhook_keys` は名前とトークン末尾 4 文字だけです。
 
 - `set_webhook` が名前と URL を KV の `feed:v1:webhooks` に保存する
 - `add_feed` と `update_feed` は `webhookKey` でその名前を指すか、`webhookUrl` を直接渡す
 - 受け付ける URL は https だけで、ホストは `discord.com` か `discordapp.com`（`ptb.` と `canary.` を含む）、パスは `/api/webhooks/{id}/{token}`
-- KV に同名が無いとき、`IT` は `DISCORD_WEBHOOK_URL_IT`、`SCIENCE` は `DISCORD_WEBHOOK_URL_SCIENCE` を使う
+- 初回アクセスで、検証を通った `DISCORD_WEBHOOK_URL_IT` と `DISCORD_WEBHOOK_URL_SCIENCE` を KV の `IT` / `SCIENCE` に一度だけ写す。マーカーが付いたあとは、解決に secret を使わない。欠けている、または形式が違う secret はスキップする
 
-secret を入れ直す作業はありません。新しい投稿先は MCP の `set_webhook` で登録します。
+移行を確認したあとは、古い 2 つの Webhook secret を消してよいです。新しい投稿先は MCP の `set_webhook` で登録します。
 
 一覧投稿用の `DISCORD_WEBHOOK_URL_NOTEBOOKLM` はフィードごとではなく、今までどおり全体で 1 つです。
 

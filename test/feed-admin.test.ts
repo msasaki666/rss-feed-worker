@@ -12,12 +12,15 @@ import {
   resolveWebhookUrl,
   setWebhook,
   updateFeed,
+  WEBHOOK_MIGRATION_KEY,
   WEBHOOKS_KEY,
 } from "../src/feed-store";
 import * as rss from "../src/rss";
 import { memoryKv } from "./memory-kv";
 
-const SECRET = "https://discord.example/super-secret-webhook";
+import { IT_WEBHOOK_URL, SCIENCE_WEBHOOK_URL } from "./webhook-fixtures";
+
+const SECRET = IT_WEBHOOK_URL;
 
 const envFor = (
   bucket: ReturnType<typeof memoryKv>,
@@ -26,7 +29,7 @@ const envFor = (
   return {
     RSS_FEED_WORKER_KV: bucket.kv,
     DISCORD_WEBHOOK_URL_IT: SECRET,
-    DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science-secret",
+    DISCORD_WEBHOOK_URL_SCIENCE: SCIENCE_WEBHOOK_URL,
     ...extra,
   } as unknown as Env;
 };
@@ -103,7 +106,7 @@ describe("feed catalog", () => {
     }
     expect(saved.marked).toBe(1);
     expect(saved.feed.webhookKey).toBe("IT");
-    expect(JSON.stringify(saved)).not.toContain("super-secret-webhook");
+    expect(JSON.stringify(saved)).not.toContain("TestItWebhookTokenAAAA");
     expect(webhook).not.toHaveBeenCalled();
     expect(bucket.puts.some((put) => put.key === "hash-current")).toBe(true);
     expect(
@@ -291,7 +294,15 @@ describe("feed catalog", () => {
     expect(unknown.ok).toBe(false);
     expect(fetchFeed).not.toHaveBeenCalled();
     expect(bucket.store.get(CATALOG_KEY)).toBe(before);
-    expect(bucket.store.has(WEBHOOKS_KEY)).toBe(false);
+    const stored = JSON.parse(bucket.store.get(WEBHOOKS_KEY) ?? "{}") as Record<
+      string,
+      string
+    >;
+    expect(stored).toEqual({
+      IT: SECRET,
+      SCIENCE: SCIENCE_WEBHOOK_URL,
+    });
+    expect(bucket.store.get(WEBHOOK_MIGRATION_KEY)).toBe("1");
     expect((await loadCatalog(env))[0]?.postTitle).toBe("はてブ IT");
     fetchFeed.mockRestore();
   });
@@ -313,27 +324,38 @@ describe("feed catalog", () => {
     if (saved.ok) {
       expect(saved.marked).toBe(0);
     }
-    expect(bucket.puts.map((put) => put.key)).toEqual([CATALOG_KEY]);
+    expect(bucket.puts.map((put) => put.key)).toEqual([
+      WEBHOOKS_KEY,
+      WEBHOOK_MIGRATION_KEY,
+      CATALOG_KEY,
+    ]);
     expect(webhook).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
 
-  it("lets a KV webhook named IT override the secret and keeps secret-only IT", async () => {
+  it("lets a KV webhook named IT override the migrated secret", async () => {
     const bucket = memoryKv();
     const env = envFor(bucket);
+    expect(await resolveWebhookUrl(env, "IT")).toBe(SECRET);
     const override = "https://discord.com/api/webhooks/42/abcdefghij";
     const saved = await setWebhook(env, "IT", override);
     expect(saved.ok).toBe(true);
     expect(await resolveWebhookUrl(env, "IT")).toBe(override);
+    env.DISCORD_WEBHOOK_URL_IT =
+      "https://discord.com/api/webhooks/99/ShouldNotBeRead9999";
+    expect(await resolveWebhookUrl(env, "IT")).toBe(override);
     const listed = await listWebhookKeys(env);
     expect(JSON.stringify(listed)).not.toContain("abcdefghij");
+    expect(JSON.stringify(listed)).not.toContain("ShouldNotBeRead9999");
     expect(listed.find((item) => item.name === "IT")?.hint).toBe("ghij");
 
-    await removeWebhook(env, "IT");
-    expect(await resolveWebhookUrl(env, "IT")).toBe(SECRET);
-    const secretOnly = await removeWebhook(env, "IT");
-    expect(secretOnly.ok).toBe(false);
-    expect(await resolveWebhookUrl(env, "IT")).toBe(SECRET);
+    const inUse = await removeWebhook(env, "IT");
+    expect(inUse.ok).toBe(false);
+    await removeFeed(env, "hatena-it");
+    await removeFeed(env, "wired-japan");
+    const removed = await removeWebhook(env, "IT");
+    expect(removed.ok).toBe(true);
+    expect(await resolveWebhookUrl(env, "IT")).toBeUndefined();
   });
 
   it("keeps seen article hashes when a feed definition is removed", async () => {
