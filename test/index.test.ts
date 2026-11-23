@@ -2,6 +2,8 @@ import type { Feed } from "htmlparser2";
 import { describe, expect, it, vi } from "vitest";
 import * as discord from "../src/discord";
 import * as rss from "../src/rss";
+import { memoryKv } from "./memory-kv";
+import { IT_WEBHOOK_URL, SCIENCE_WEBHOOK_URL } from "./webhook-fixtures";
 
 vi.mock("cloudflare:workers", () => ({ env: {} }));
 
@@ -200,14 +202,18 @@ describe("processFeed", () => {
       return new Response("ok", { status: 200 });
     });
     vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
-    vi.spyOn(rss, "extractItems").mockResolvedValue([
-      {
-        title: "Scheduled",
-        link: "https://example.com/scheduled",
-        linkHash: "hash-scheduled",
-        id: undefined,
-      },
-    ]);
+    let feedNumber = 0;
+    vi.spyOn(rss, "extractItems").mockImplementation(async () => {
+      feedNumber += 1;
+      return [
+        {
+          title: "Scheduled",
+          link: `https://example.com/scheduled-${feedNumber}`,
+          linkHash: `hash-scheduled-${feedNumber}`,
+          id: undefined,
+        },
+      ];
+    });
     const destinations: string[] = [];
     vi.spyOn(discord, "sendDiscordWebhook").mockImplementation(
       async (url: string) => {
@@ -216,14 +222,9 @@ describe("processFeed", () => {
       },
     );
     const env = {
-      RSS_FEED_WORKER_KV: {
-        get: async (keys: string[]) => {
-          return new Map(keys.map((key) => [key, null]));
-        },
-        put: async () => {},
-      },
-      DISCORD_WEBHOOK_URL_IT: "https://discord.example/it",
-      DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science",
+      RSS_FEED_WORKER_KV: memoryKv().kv as unknown as Env["RSS_FEED_WORKER_KV"],
+      DISCORD_WEBHOOK_URL_IT: IT_WEBHOOK_URL,
+      DISCORD_WEBHOOK_URL_SCIENCE: SCIENCE_WEBHOOK_URL,
       DISCORD_WEBHOOK_URL_NOTEBOOKLM: "",
     } as unknown as Env;
 
@@ -249,8 +250,62 @@ describe("processFeed", () => {
     );
     expect(rss.fetchFeed).toHaveBeenCalledWith("https://wired.jp/feed/rss");
     expect(rss.fetchFeed).toHaveBeenCalledTimes(2);
-    expect(destinations).toContain("https://discord.example/it");
-    expect(destinations).toContain("https://discord.example/science");
+    expect(destinations).toContain(IT_WEBHOOK_URL);
+    expect(destinations).toContain(SCIENCE_WEBHOOK_URL);
+    vi.restoreAllMocks();
+  });
+
+  it("does not schedule a disabled feed", async () => {
+    const bucket = memoryKv();
+    const env = {
+      RSS_FEED_WORKER_KV: bucket.kv,
+      DISCORD_WEBHOOK_URL_IT: IT_WEBHOOK_URL,
+      DISCORD_WEBHOOK_URL_SCIENCE: SCIENCE_WEBHOOK_URL,
+      DISCORD_WEBHOOK_URL_NOTEBOOKLM: "",
+    } as unknown as Env;
+    const { updateFeed } = await import("../src/feed-store");
+    await updateFeed(env, { id: "wired-japan", enabled: false });
+    const urls: string[] = [];
+    vi.spyOn(rss, "fetchFeed").mockImplementation(async (url: string) => {
+      urls.push(url);
+      return new Response("ok", { status: 200 });
+    });
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
+    vi.spyOn(rss, "extractItems").mockResolvedValue([
+      {
+        title: "Scheduled",
+        link: "https://example.com/scheduled",
+        linkHash: "hash-scheduled-disabled",
+        id: undefined,
+      },
+    ]);
+    const destinations: string[] = [];
+    vi.spyOn(discord, "sendDiscordWebhook").mockImplementation(
+      async (url: string) => {
+        destinations.push(url);
+        return new Response(null, { status: 200 });
+      },
+    );
+    const worker = (await import("../src/index")).default;
+    if (!worker.scheduled) {
+      throw new Error("scheduled handler is missing");
+    }
+    await worker.scheduled(
+      {
+        cron: "0 23 * * *",
+        scheduledTime: Date.now(),
+        noRetry: () => {},
+      } as ScheduledController,
+      env,
+      {
+        waitUntil: () => {},
+        passThroughOnException: () => {},
+      } as unknown as ExecutionContext,
+    );
+    expect(urls).toContain("https://b.hatena.ne.jp/hotentry/it.rss");
+    expect(urls).not.toContain("https://wired.jp/feed/rss");
+    expect(destinations).toContain(IT_WEBHOOK_URL);
+    expect(destinations).not.toContain(SCIENCE_WEBHOOK_URL);
     vi.restoreAllMocks();
   });
 });

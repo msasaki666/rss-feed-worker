@@ -13,7 +13,7 @@ Cloudflare Workers を使って複数の RSS フィードを監視し、新着�
 ## コード構成
 
 - **`src/index.ts`**: Cron と HTTP の入口。`/mcp` だけ MCP に渡し、それ以外は従来のレスポンス
-- **`src/feeds.ts`**: 監視対象フィード。Webhook URL は env から読む
+- **`src/feed-store.ts`**: フィード定義の保存。Webhook は別名で secret を参照する
 - **`src/feed-processor.ts`**: RSS 取得、既読判定、Discord 投稿（`processFeed`）
 - **`src/mcp.ts`**: MCP サーバーとツール
 - **`src/access.ts`**: `Cf-Access-Jwt-Assertion` の検証
@@ -28,14 +28,48 @@ Cloudflare Workers を使って複数の RSS フィードを監視し、新着�
 
 ### ツール
 
-| ツール              | 副作用                 | 説明                                                                               |
-| ------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
-| `list_feeds`        | なし                   | 設定済みフィードの `postTitle` と RSS URL。Webhook URL は返さない                  |
-| `preview_feed`      | なし                   | 指定フィードを取得して記事のタイトルと URL を返す。既読にしない                    |
-| `list_unseen_items` | なし                   | KV に無い記事だけ返す。投稿も既読保存もしない                                      |
-| `publish_new_items` | Discord 投稿と KV 保存 | Cron と同じ処理。`feed` を省略すると全フィード。投稿できた記事を 10 日間既読にする |
+| ツール              | 副作用                             | 説明                                                                                       |
+| ------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| `list_feeds`        | 初回だけ定義を KV に作る           | 保存済みフィードの id、名前、RSS URL、`webhookKey`、enabled。Webhook URL は返さない        |
+| `list_webhook_keys` | なし                               | 名前とトークン末尾 4 文字だけ返す。URL は返さない                                          |
+| `set_webhook`       | URL を KV に保存                   | Discord の Webhook を名前で登録する。URL は返さない                                        |
+| `remove_webhook`    | KV の登録を削除                    | 使われていない登録を消す。secret の IT / SCIENCE は削除できない                            |
+| `add_feed`          | 定義の保存。既定で現在の記事を既読 | https の RSS/Atom と解釈できたときだけ追加する。投稿先は名前か Webhook URL                 |
+| `update_feed`       | 定義の更新。URL 変更時は既読       | id で名前、RSS URL、投稿先、enabled を変える。Webhook URL は返さない                       |
+| `remove_feed`       | 定義の削除                         | フィード定義を消す。記事の既読ハッシュは残す                                               |
+| `preview_feed`      | なし                               | 指定フィードを取得して記事のタイトルと URL を返す。既読にしない                            |
+| `list_unseen_items` | なし                               | KV に無い記事だけ返す。投稿も既読保存もしない                                              |
+| `publish_new_items` | Discord 投稿と KV 保存             | Cron と同じ処理。`feed` を省略すると有効なフィード全部。投稿できた記事を 10 日間既読にする |
 
-`feed` には `list_feeds` の `postTitle` をそのまま渡します（例: `はてブ IT`）。設定に無い URL は取得できません。
+`feed` には `list_feeds` の `id` または `postTitle` を渡します（例: `hatena-it`、`はてブ IT`）。設定に無い URL を `feed` に渡しても取得しません。
+
+### フィードの項目
+
+定義は KV の `feed:v1:catalog` にまとめて保存します。既読の記事ハッシュと同じ名前空間ですが、キーは重なりません。初回の読み出しでカタログが無いときだけ、これまでコードに書いてあった 2 件を作ります。全部削除したあとは作り直しません。
+
+| 項目         | 内容                                                                       |
+| ------------ | -------------------------------------------------------------------------- |
+| `id`         | 更新と削除に使う安定した ID。省略すると自動で付きます                      |
+| `postTitle`  | Discord に出す名前                                                         |
+| `rssUrl`     | https の RSS/Atom。localhost、`.local`、IP アドレスそのものは拒否します    |
+| `webhookKey` | 登録済み Webhook の名前。`IT` と `SCIENCE` は初回移行で KV に写した名前    |
+| `webhookUrl` | 追加・更新時だけ渡す Discord の Webhook URL。KV に保存し、応答には出さない |
+| `enabled`    | `false` のフィードは Cron と、`feed` を省略した投稿から外れます            |
+
+Webhook URL はどのツールの応答にも出しません。`list_webhook_keys` は名前とトークン末尾 4 文字だけです。
+
+- `set_webhook` が名前と URL を KV の `feed:v1:webhooks` に保存する
+- `add_feed` と `update_feed` は `webhookKey` でその名前を指すか、`webhookUrl` を直接渡す
+- 受け付ける URL は https だけで、ホストは `discord.com` か `discordapp.com`（`ptb.` と `canary.` を含む）、パスは `/api/webhooks/{id}/{token}`
+- 初回アクセスで、検証を通った `DISCORD_WEBHOOK_URL_IT` と `DISCORD_WEBHOOK_URL_SCIENCE` を KV の `IT` / `SCIENCE` に一度だけ写す。マーカーが付いたあとは、解決に secret を使わない。欠けている、または形式が違う secret はスキップする
+
+移行を確認したあとは、古い 2 つの Webhook secret を消してよいです。新しい投稿先は MCP の `set_webhook` で登録します。
+
+一覧投稿用の `DISCORD_WEBHOOK_URL_NOTEBOOKLM` はフィードごとではなく、今までどおり全体で 1 つです。
+
+`add_feed` と、`rssUrl` を変える `update_feed` は、保存前にその URL を取得して RSS/Atom として解釈できることを確認します。既定の `markCurrentAsSeen: true` では、その時点の記事を Discord に出さず 10 日間既読にします。既読は記事 URL のハッシュなので、フィードの URL を変えても、同じ記事 URL は再投稿しません。`markCurrentAsSeen: true` のときは、新しいフィード定義をカタログに出す前に、今ある記事のハッシュを KV へ書きます。そのあいだに Cron が走っても、既存記事は未読になりません。RSS として読めなかった場合は、Webhook もカタログも変えません。取得時のリダイレクトは最大 3 回まで自分で追い、飛び先も https で、localhost、`.local`、IP アドレス、認証情報を拒否します。新しいフィードにしか無い記事も、この既定では初回の一斉投稿になりません。バックログも投稿したいときは `markCurrentAsSeen: false` にします。
+
+カタログは 1 つの JSON を丸ごと上書きします。追加の RSS 取得中に別の追加・更新・削除が重なると、先に終わった変更が残らないことがあります。
 
 `preview_feed` と `list_unseen_items` の `limit` は省略時 20、最大 50 です。件数を超える分は `truncated: true` になります。`publish_new_items` は件数で切らず、未読をすべて処理します。
 
@@ -123,7 +157,7 @@ Access を有効にした本番 URL では、Inspector の **Quick OAuth Flow** 
 - AI 向けインターフェースはリモート MCP とした。チャット API や API キーは追加していない。
 - 認可の本体は Access の Managed OAuth。Worker は JWT の再検証だけを行う。
 - `/mcp` は Access の JWT 設定が無いと拒否する。検証の省略はローカルの `MCP_ALLOW_UNAUTHENTICATED=true` だけ。
-- ツールが触れるフィードは `src/feeds.ts` の定義だけ。任意 URL の取得はできない。
+- ツールが触れるフィードは KV に保存した定義だけ。任意 URL の取得はできない。
 - `publish_new_items` は Discord に投稿し、成功した URL を既読にする。確認だけなら `preview_feed` か `list_unseen_items` を使う。
 
 ## 設定ファイル

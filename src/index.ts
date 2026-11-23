@@ -17,7 +17,7 @@
 
 import { env } from "cloudflare:workers";
 import { processFeed } from "./feed-processor";
-import { getFeedTargets } from "./feeds";
+import { getEnabledFeedTargets } from "./feed-store";
 import { handleMcpRequest } from "./mcp";
 
 export { processFeed };
@@ -40,7 +40,7 @@ const handleScheduled = async (
 ): Promise<void> => {
   try {
     await Promise.all(
-      getFeedTargets(env).map(async (target) => {
+      (await getEnabledFeedTargets(env)).map(async (target) => {
         await processFeed(target, env);
       }),
     );

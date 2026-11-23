@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- Source: `src/` — `index.ts` (Worker entry), `feeds.ts` (feed list), `feed-processor.ts` (fetch, dedupe, Discord), `rss.ts` (RSS fetch/parse), `discord.ts` (Webhook + retry), `mcp.ts` (Streamable HTTP MCP at `/mcp`), `access.ts` (Access JWT), `mock.ts` (test helper).
+- Source: `src/` — `index.ts` (Worker entry), `feed-store.ts` (KV feed catalog), `feed-url.ts` (RSS URL checks), `feed-processor.ts` (fetch, dedupe, Discord), `rss.ts` (RSS fetch/parse), `discord.ts` (Webhook + retry), `mcp.ts` (Streamable HTTP MCP at `/mcp`), `access.ts` (Access JWT), `mock.ts` (test helper).
 - Tests: `test/*.test.ts` (Vitest). Keep unit tests close to behavior (parsing, retries, KV logic via fakes).
 - Config: `wrangler.jsonc` (cron, KV, env vars), `tsconfig.json`, `biome.json`, `.editorconfig`, `.dev.vars` (local dev values; never commit secrets).
 
