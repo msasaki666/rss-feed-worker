@@ -11,7 +11,7 @@
 - `npm install`: install dependencies.
 - `npm run dev`: start Wrangler dev with scheduled testing enabled. Example: `curl "http://localhost:8787/__scheduled?cron=*+*+*+*+*"` to trigger.
 - `npm test`: run Vitest once in CI-friendly mode.
-- `npm run deploy`: deploy the Worker via Wrangler.
+- `npm run deploy`: local Wrangler deploy. Production deploys itself through Cloudflare Workers Builds on push or merge to `main` (see README).
 - `npm run cf-typegen`: regenerate `Env` bindings types from `wrangler.jsonc`.
 
 ## Coding Style & Naming Conventions

@@ -10,7 +10,7 @@ This is a Cloudflare Worker that monitors RSS feeds and sends new articles to Di
 
 - `npm run dev` - Start development server with scheduled trigger testing
 - `npm run start` - Alias for dev command
-- `npm run deploy` - Deploy to Cloudflare Workers
+- `npm run deploy` - Manual Wrangler deploy. Production deploys automatically via Cloudflare Workers Builds when `main` is pushed or merged (see README).
 - `npm run cf-typegen` - Generate TypeScript types from Wrangler configuration
 
 ## Code Architecture

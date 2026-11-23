@@ -116,7 +116,7 @@ npx wrangler secret put ACCESS_TEAM_DOMAIN
 npx wrangler secret put ACCESS_AUD
 ```
 
-10. Worker をデプロイする。この変更だけではデプロイしない。
+10. `main` へ merge すると、Workers Builds が Worker をデプロイする。手動の `wrangler deploy` は不要。進め方は「デプロイ」。
 
 ホスト全体を Access の後ろに置くと、`/mcp` 以外の HTTP もログインが必要になる。Cron は HTTP ではないので従来どおり動く。ログイン後のレスポンス本文は、これまでと同じです。
 
@@ -163,7 +163,7 @@ Access を有効にした本番 URL では、Inspector の **Quick OAuth Flow** 
 ## 設定ファイル
 
 - **`wrangler.jsonc`**: Cron スケジュール、KV 名前空間、環境変数などの Worker 設定
-- **`package.json`**: `npm run dev` (ローカル開発) / `npm run deploy` (デプロイ) などのコマンド
+- **`package.json`**: `npm run dev`（ローカル開発）などのコマンド。本番デプロイは「デプロイ」
 - **`biome.json`**: Biome による整形・Lint 設定。スペースインデントとダブルクォートを使用
 
 ## 必要な環境変数
@@ -182,6 +182,12 @@ Discord の Webhook URL は wrangler の secret にしてください。
 npm install
 npm run dev
 ```
+
+## デプロイ
+
+本番への反映は Cloudflare Workers Builds（GitHub 連携）が行います。`main` への push または merge で自動デプロイされるので、手動の `wrangler deploy` は不要です。
+
+進み具合は、GitHub のそのコミットに付く **Workers Builds: rss-feed-worker** チェックか、Cloudflare ダッシュボードの **Builds** で確認します。
 
 ## 今後学ぶと良いこと
 
