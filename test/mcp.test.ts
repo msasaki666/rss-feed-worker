@@ -4,6 +4,7 @@ import * as discord from "../src/discord";
 import * as rss from "../src/rss";
 import {
   type AccessSigner,
+  buildForgedTokens,
   createAccessSigner,
   TEST_AUD,
   TEST_TEAM_DOMAIN,
@@ -397,5 +398,267 @@ describe("MCP endpoint", () => {
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("");
+  });
+
+  it("rejects forged Access tokens when the local bypass flag is also set", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url === `${TEST_TEAM_DOMAIN}/cdn-cgi/access/certs`) {
+          return new Response(JSON.stringify({ keys: [signer.jwk] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("unexpected", { status: 500 });
+      });
+    const forged = await buildForgedTokens(signer, TEST_TEAM_DOMAIN);
+    for (const token of Object.values(forged)) {
+      const called = await rpc(
+        baseEnv({
+          ACCESS_TEAM_DOMAIN: TEST_TEAM_DOMAIN,
+          ACCESS_AUD: TEST_AUD,
+          MCP_ALLOW_UNAUTHENTICATED: "true",
+        }),
+        "tools/list",
+        {},
+        { "cf-access-jwt-assertion": token },
+      );
+      expect(called.status).toBe(403);
+      expect(called.text).toMatch(/^Invalid token/);
+    }
+    fetchMock.mockRestore();
+  });
+
+  it("reports load failures without posting or marking items seen", async () => {
+    const put = vi.fn();
+    const webhook = vi.spyOn(discord, "sendDiscordWebhook");
+    const env = baseEnv({
+      RSS_FEED_WORKER_KV: {
+        get: async () => new Map(),
+        put,
+      } as unknown as Env["RSS_FEED_WORKER_KV"],
+    });
+    vi.spyOn(rss, "fetchFeed").mockResolvedValue(
+      new Response("down", { status: 500 }),
+    );
+
+    const preview = await rpc(env, "tools/call", {
+      name: "preview_feed",
+      arguments: { feed: "はてブ IT" },
+    });
+    const previewResult = (
+      preview.body as {
+        result: { isError?: boolean; content: Array<{ text: string }> };
+      }
+    ).result;
+    expect(previewResult.isError).toBe(true);
+    expect(previewResult.content[0]?.text).toContain("既読にはしていません");
+    expect(previewResult.content[0]?.text).not.toContain("既読として");
+
+    vi.mocked(rss.fetchFeed).mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue(null);
+    const unseen = await rpc(env, "tools/call", {
+      name: "list_unseen_items",
+      arguments: { feed: "WIRED Japan" },
+    });
+    const unseenResult = (
+      unseen.body as {
+        result: { isError?: boolean; content: Array<{ text: string }> };
+      }
+    ).result;
+    expect(unseenResult.isError).toBe(true);
+    expect(unseenResult.content[0]?.text).toContain("既読にはしていません");
+
+    vi.mocked(rss.fetchFeed).mockRejectedValue(new Error("network down"));
+    const published = await rpc(env, "tools/call", {
+      name: "publish_new_items",
+      arguments: { feed: "はてブ IT" },
+    });
+    const publishedResult = (
+      published.body as {
+        result: {
+          isError?: boolean;
+          structuredContent: {
+            feeds: Array<{ status: string; message?: string }>;
+          };
+          content: Array<{ text: string }>;
+        };
+      }
+    ).result;
+    expect(publishedResult.isError).toBeUndefined();
+    expect(publishedResult.structuredContent.feeds[0]).toMatchObject({
+      status: "error",
+      message: "network down",
+    });
+    expect(publishedResult.content[0]?.text).not.toContain("既読として");
+    expect(webhook).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("rejects an empty feed name before touching the network", async () => {
+    const fetchFeed = vi.spyOn(rss, "fetchFeed");
+    const webhook = vi.spyOn(discord, "sendDiscordWebhook");
+    const put = vi.fn();
+    const env = baseEnv({
+      RSS_FEED_WORKER_KV: {
+        get: async () => new Map(),
+        put,
+      } as unknown as Env["RSS_FEED_WORKER_KV"],
+    });
+
+    for (const feed of ["", "   ", "https://evil.example/rss.xml"]) {
+      for (const name of [
+        "preview_feed",
+        "list_unseen_items",
+        "publish_new_items",
+      ]) {
+        const called = await rpc(env, "tools/call", {
+          name,
+          arguments: { feed },
+        });
+        const result = (called.body as { result: { isError?: boolean } })
+          .result;
+        expect(result.isError).toBe(true);
+      }
+    }
+
+    expect(fetchFeed).not.toHaveBeenCalled();
+    expect(webhook).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("processes only the configured feeds when feed is omitted", async () => {
+    vi.spyOn(rss, "fetchFeed").mockImplementation(async () => {
+      return new Response("ok", { status: 200 });
+    });
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
+    vi.spyOn(rss, "extractItems").mockResolvedValue([
+      {
+        title: "全件",
+        link: "https://example.com/all",
+        linkHash: "hash-all",
+        id: undefined,
+      },
+    ]);
+    const destinations: string[] = [];
+    vi.spyOn(discord, "sendDiscordWebhook").mockImplementation(
+      async (url: string) => {
+        destinations.push(url);
+        return new Response(null, { status: 200 });
+      },
+    );
+    const called = await rpc(baseEnv(), "tools/call", {
+      name: "publish_new_items",
+      arguments: {},
+    });
+    const result = (
+      called.body as {
+        result: { structuredContent: { feeds: Array<{ postTitle: string }> } };
+      }
+    ).result;
+    expect(
+      result.structuredContent.feeds.map((feed) => feed.postTitle),
+    ).toEqual(["はてブ IT", "WIRED Japan"]);
+    expect(rss.fetchFeed).toHaveBeenCalledTimes(2);
+    expect(rss.fetchFeed).toHaveBeenCalledWith(
+      "https://b.hatena.ne.jp/hotentry/it.rss",
+    );
+    expect(rss.fetchFeed).toHaveBeenCalledWith("https://wired.jp/feed/rss");
+    expect(destinations).toContain("https://discord.example/it-secret");
+    expect(destinations).toContain("https://discord.example/science-secret");
+    expect(destinations).not.toContain("https://evil.example/rss.xml");
+    vi.restoreAllMocks();
+  });
+
+  it("pages unseen items without posting and publishes every unseen item", async () => {
+    const many = Array.from({ length: 21 }, (_, index) => {
+      return {
+        title: `記事${index}`,
+        link: `https://example.com/${index}`,
+        linkHash: `hash-${index}`,
+        id: undefined,
+      };
+    });
+    vi.spyOn(rss, "fetchFeed").mockImplementation(async () => {
+      return new Response("ok", { status: 200 });
+    });
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
+    vi.spyOn(rss, "extractItems").mockResolvedValue(many.slice(0, 3));
+    const webhook = vi.spyOn(discord, "sendDiscordWebhook");
+    const paged = await rpc(baseEnv(), "tools/call", {
+      name: "list_unseen_items",
+      arguments: { feed: "はてブ IT", limit: 2 },
+    });
+    const pagedResult = (
+      paged.body as {
+        result: {
+          structuredContent: {
+            total: number;
+            returned: number;
+            truncated: boolean;
+            items: Array<{ linkHash: string }>;
+          };
+        };
+      }
+    ).result.structuredContent;
+    expect(pagedResult).toMatchObject({
+      total: 3,
+      returned: 2,
+      truncated: true,
+    });
+    expect(pagedResult.items.map((item) => item.linkHash)).toEqual([
+      "hash-0",
+      "hash-1",
+    ]);
+    expect(webhook).not.toHaveBeenCalled();
+
+    vi.mocked(rss.extractItems).mockResolvedValue(many);
+    const defaults = await rpc(baseEnv(), "tools/call", {
+      name: "preview_feed",
+      arguments: { feed: "はてブ IT" },
+    });
+    expect(
+      (
+        defaults.body as {
+          result: {
+            structuredContent: { returned: number; truncated: boolean };
+          };
+        }
+      ).result.structuredContent,
+    ).toMatchObject({ returned: 20, truncated: true });
+
+    for (const limit of [0, 51, 1.5]) {
+      const rejected = await rpc(baseEnv(), "tools/call", {
+        name: "preview_feed",
+        arguments: { feed: "はてブ IT", limit },
+      });
+      const rejectedBody = rejected.body as {
+        error?: { message: string };
+        result?: { isError?: boolean };
+      };
+      const rejectedTool = rejectedBody.result?.isError === true;
+      const rejectedRpc = rejectedBody.error !== undefined;
+      expect(rejectedTool || rejectedRpc || rejected.status !== 200).toBe(true);
+    }
+    expect(rss.fetchFeed).toHaveBeenCalledTimes(2);
+
+    const publishWebhook = vi
+      .spyOn(discord, "sendDiscordWebhook")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    await rpc(baseEnv({ DISCORD_WEBHOOK_URL_NOTEBOOKLM: "" }), "tools/call", {
+      name: "publish_new_items",
+      arguments: { feed: "はてブ IT" },
+    });
+    const individual = publishWebhook.mock.calls.filter((call) => {
+      return call[0] === "https://discord.example/it-secret";
+    });
+    expect(individual).toHaveLength(21);
+    vi.restoreAllMocks();
   });
 });

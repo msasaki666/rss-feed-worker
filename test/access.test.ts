@@ -8,6 +8,7 @@ import {
 } from "../src/access";
 import {
   type AccessSigner,
+  buildForgedTokens,
   createAccessSigner,
   TEST_AUD,
   TEST_TEAM_DOMAIN,
@@ -174,5 +175,81 @@ describe("authorizeMcpRequest", () => {
       { ACCESS_AUD: TEST_AUD },
     );
     expect(response?.status).toBe(500);
+  });
+
+  it("accepts only the exact local bypass value", async () => {
+    for (const value of ["TRUE", "1", "false"]) {
+      const response = await authorizeMcpRequest(
+        new Request("https://worker.example/mcp"),
+        { MCP_ALLOW_UNAUTHENTICATED: value },
+      );
+      expect(response?.status).toBe(403);
+      expect(await response?.text()).toMatch(/ACCESS_TEAM_DOMAIN/);
+    }
+
+    for (const value of [" true ", "true\n"]) {
+      const response = await authorizeMcpRequest(
+        new Request("https://worker.example/mcp"),
+        { MCP_ALLOW_UNAUTHENTICATED: value },
+      );
+      expect(response).toBeNull();
+    }
+  });
+
+  it("returns 500 when the bypass flag accompanies a partial Access config", async () => {
+    const audOnly = await authorizeMcpRequest(
+      new Request("https://worker.example/mcp"),
+      { ACCESS_AUD: TEST_AUD, MCP_ALLOW_UNAUTHENTICATED: "true" },
+    );
+    expect(audOnly?.status).toBe(500);
+
+    const domainOnly = await authorizeMcpRequest(
+      new Request("https://worker.example/mcp"),
+      {
+        ACCESS_TEAM_DOMAIN: TEST_TEAM_DOMAIN,
+        MCP_ALLOW_UNAUTHENTICATED: "true",
+      },
+    );
+    expect(domainOnly?.status).toBe(500);
+  });
+
+  it("rejects forged tokens even when the local bypass flag is set", async () => {
+    const signer = await createAccessSigner("forged-suite-key");
+    const teamDomain = "https://forged-tokens.cloudflareaccess.com";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url === `${teamDomain}/cdn-cgi/access/certs`) {
+          return new Response(JSON.stringify({ keys: [signer.jwk] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("unexpected", { status: 500 });
+      });
+    const forged = await buildForgedTokens(signer, teamDomain);
+    const configured = {
+      ACCESS_TEAM_DOMAIN: "forged-tokens.cloudflareaccess.com",
+      ACCESS_AUD: TEST_AUD,
+    };
+
+    for (const token of Object.values(forged)) {
+      for (const env of [
+        configured,
+        { ...configured, MCP_ALLOW_UNAUTHENTICATED: "true" },
+      ]) {
+        const response = await authorizeMcpRequest(
+          new Request("https://worker.example/mcp", {
+            headers: { "cf-access-jwt-assertion": token },
+          }),
+          env,
+        );
+        expect(response?.status).toBe(403);
+        expect(await response?.text()).toMatch(/^Invalid token/);
+      }
+    }
+
+    fetchMock.mockRestore();
   });
 });
