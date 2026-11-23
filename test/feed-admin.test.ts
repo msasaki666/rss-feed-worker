@@ -8,9 +8,11 @@ import {
   listWebhookKeys,
   loadCatalog,
   removeFeed,
+  removeWebhook,
   resolveWebhookUrl,
   setWebhook,
   updateFeed,
+  WEBHOOKS_KEY,
 } from "../src/feed-store";
 import * as rss from "../src/rss";
 import { memoryKv } from "./memory-kv";
@@ -175,7 +177,174 @@ describe("feed catalog", () => {
     expect(updatedKeys.indexOf("hash-current")).toBeLessThan(
       updatedKeys.lastIndexOf(CATALOG_KEY),
     );
+    expect(
+      bucket.puts.find((put) => put.key === "hash-current")?.options,
+    ).toEqual({ expirationTtl: 864000 });
     vi.restoreAllMocks();
+  });
+
+  it("does not save a feed when the RSS fetch or parse fails", async () => {
+    const bucket = memoryKv();
+    const env = envFor(bucket);
+    const before = bucket.store.get(CATALOG_KEY);
+    vi.spyOn(rss, "fetchFeed").mockResolvedValue(
+      new Response("down", { status: 500 }),
+    );
+    const fetched = await addFeed(env, {
+      id: "broken",
+      postTitle: "Broken",
+      rssUrl: "https://example.com/rss.xml",
+      webhookUrl: "https://discord.com/api/webhooks/42/abcdefghij",
+    });
+    expect(fetched.ok).toBe(false);
+    expect(bucket.store.get(CATALOG_KEY)).toBe(before);
+    expect(bucket.store.has(WEBHOOKS_KEY)).toBe(false);
+
+    vi.mocked(rss.fetchFeed).mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue(null);
+    const parsed = await updateFeed(env, {
+      id: "hatena-it",
+      rssUrl: "https://example.com/new.xml",
+      webhookUrl: "https://discord.com/api/webhooks/42/abcdefghij",
+    });
+    expect(parsed.ok).toBe(false);
+    expect(bucket.store.get(CATALOG_KEY)).toBe(before);
+    expect(bucket.store.has(WEBHOOKS_KEY)).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it("rejects redirects to a private address or http and saves nothing", async () => {
+    const bucket = memoryKv();
+    const env = envFor(bucket);
+    const before = bucket.store.get(CATALOG_KEY);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.startsWith("https://example.com/private")) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://127.0.0.1/rss" },
+          });
+        }
+        if (url.startsWith("https://example.com/plain")) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: "http://example.com/rss" },
+          });
+        }
+        return new Response("unexpected", { status: 500 });
+      });
+    const privateRedirect = await addFeed(env, {
+      id: "redir",
+      postTitle: "Redir",
+      rssUrl: "https://example.com/private",
+      webhookUrl: "https://discord.com/api/webhooks/42/abcdefghij",
+    });
+    expect(privateRedirect.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock.mockClear();
+    const httpRedirect = await updateFeed(env, {
+      id: "hatena-it",
+      rssUrl: "https://example.com/plain",
+      webhookUrl: "https://discord.com/api/webhooks/42/abcdefghij",
+    });
+    expect(httpRedirect.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(bucket.store.get(CATALOG_KEY)).toBe(before);
+    expect(bucket.store.has(WEBHOOKS_KEY)).toBe(false);
+    fetchMock.mockRestore();
+  });
+
+  it("rejects duplicate ids, empty titles, and unknown webhook keys", async () => {
+    const bucket = memoryKv();
+    const env = envFor(bucket);
+    const before = bucket.store.get(CATALOG_KEY);
+    const fetchFeed = vi.spyOn(rss, "fetchFeed");
+    const duplicate = await addFeed(env, {
+      id: "hatena-it",
+      postTitle: "Another",
+      rssUrl: "https://example.com/rss.xml",
+      webhookKey: "IT",
+    });
+    const blank = await addFeed(env, {
+      postTitle: " ",
+      rssUrl: "https://example.com/rss.xml",
+      webhookKey: "IT",
+    });
+    const brokenTitle = await updateFeed(env, {
+      id: "hatena-it",
+      postTitle: "line\nbreak",
+    });
+    const unknown = await addFeed(env, {
+      id: "missing-hook",
+      postTitle: "Missing",
+      rssUrl: "https://example.com/rss.xml",
+      webhookKey: "NOPE",
+    });
+    expect(duplicate.ok).toBe(false);
+    expect(blank.ok).toBe(false);
+    expect(brokenTitle.ok).toBe(false);
+    expect(unknown.ok).toBe(false);
+    expect(fetchFeed).not.toHaveBeenCalled();
+    expect(bucket.store.get(CATALOG_KEY)).toBe(before);
+    expect(bucket.store.has(WEBHOOKS_KEY)).toBe(false);
+    expect((await loadCatalog(env))[0]?.postTitle).toBe("はてブ IT");
+    fetchFeed.mockRestore();
+  });
+
+  it("does not mark current items when asked not to", async () => {
+    const bucket = memoryKv();
+    const env = envFor(bucket);
+    parsedFeed();
+    const webhook = vi.spyOn(discord, "sendDiscordWebhook");
+    bucket.puts.length = 0;
+    const saved = await addFeed(env, {
+      id: "quiet",
+      postTitle: "Quiet",
+      rssUrl: "https://example.com/rss.xml",
+      webhookKey: "IT",
+      markCurrentAsSeen: false,
+    });
+    expect(saved.ok).toBe(true);
+    if (saved.ok) {
+      expect(saved.marked).toBe(0);
+    }
+    expect(bucket.puts.map((put) => put.key)).toEqual([CATALOG_KEY]);
+    expect(webhook).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("lets a KV webhook named IT override the secret and keeps secret-only IT", async () => {
+    const bucket = memoryKv();
+    const env = envFor(bucket);
+    const override = "https://discord.com/api/webhooks/42/abcdefghij";
+    const saved = await setWebhook(env, "IT", override);
+    expect(saved.ok).toBe(true);
+    expect(await resolveWebhookUrl(env, "IT")).toBe(override);
+    const listed = await listWebhookKeys(env);
+    expect(JSON.stringify(listed)).not.toContain("abcdefghij");
+    expect(listed.find((item) => item.name === "IT")?.hint).toBe("ghij");
+
+    await removeWebhook(env, "IT");
+    expect(await resolveWebhookUrl(env, "IT")).toBe(SECRET);
+    const secretOnly = await removeWebhook(env, "IT");
+    expect(secretOnly.ok).toBe(false);
+    expect(await resolveWebhookUrl(env, "IT")).toBe(SECRET);
+  });
+
+  it("keeps seen article hashes when a feed definition is removed", async () => {
+    const bucket = memoryKv({ "hash-current": "cached" });
+    const env = envFor(bucket);
+    const removed = await removeFeed(env, "hatena-it");
+    expect(removed.ok).toBe(true);
+    expect(bucket.store.get("hash-current")).toBe("cached");
+    expect(
+      (await loadCatalog(env)).some((feed) => feed.id === "hatena-it"),
+    ).toBe(false);
   });
 
   it("skips disabled feeds and feeds with an unknown webhook key", async () => {

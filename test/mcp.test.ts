@@ -691,4 +691,56 @@ describe("MCP endpoint", () => {
     expect(individual).toHaveLength(21);
     vi.restoreAllMocks();
   });
+
+  it("publishes a disabled feed only when that feed is named", async () => {
+    const bucket = memoryKv();
+    const env = baseEnv({
+      RSS_FEED_WORKER_KV: bucket.kv as unknown as Env["RSS_FEED_WORKER_KV"],
+      DISCORD_WEBHOOK_URL_NOTEBOOKLM: "",
+    });
+    const { updateFeed } = await import("../src/feed-store");
+    await updateFeed(env, { id: "wired-japan", enabled: false });
+    const urls: string[] = [];
+    vi.spyOn(rss, "fetchFeed").mockImplementation(async (url: string) => {
+      urls.push(url);
+      return new Response("ok", { status: 200 });
+    });
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
+    let feedNumber = 0;
+    vi.spyOn(rss, "extractItems").mockImplementation(async () => {
+      feedNumber += 1;
+      return [
+        {
+          title: "Disabled",
+          link: `https://example.com/disabled-${feedNumber}`,
+          linkHash: `hash-disabled-${feedNumber}`,
+          id: undefined,
+        },
+      ];
+    });
+    const webhook = vi
+      .spyOn(discord, "sendDiscordWebhook")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    await rpc(env, "tools/call", {
+      name: "publish_new_items",
+      arguments: {},
+    });
+    expect(urls).toContain("https://b.hatena.ne.jp/hotentry/it.rss");
+    expect(urls).not.toContain("https://wired.jp/feed/rss");
+    expect(webhook.mock.calls.map((call) => call[0])).not.toContain(
+      "https://discord.example/science-secret",
+    );
+
+    urls.length = 0;
+    webhook.mockClear();
+    await rpc(env, "tools/call", {
+      name: "publish_new_items",
+      arguments: { feed: "wired-japan" },
+    });
+    expect(urls).toEqual(["https://wired.jp/feed/rss"]);
+    expect(webhook.mock.calls.map((call) => call[0])).toContain(
+      "https://discord.example/science-secret",
+    );
+    vi.restoreAllMocks();
+  });
 });

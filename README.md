@@ -67,7 +67,7 @@ secret を入れ直す作業はありません。新しい投稿先は MCP の `
 
 一覧投稿用の `DISCORD_WEBHOOK_URL_NOTEBOOKLM` はフィードごとではなく、今までどおり全体で 1 つです。
 
-`add_feed` と、`rssUrl` を変える `update_feed` は、保存前にその URL を取得して RSS/Atom として解釈できることを確認します。既定の `markCurrentAsSeen: true` では、その時点の記事を Discord に出さず 10 日間既読にします。既読は記事 URL のハッシュなので、フィードの URL を変えても、同じ記事 URL は再投稿しません。`markCurrentAsSeen: true` のときは、新しいフィード定義をカタログに出す前に、今ある記事のハッシュを KV へ書きます。そのあいだに Cron が走っても、既存記事は未読になりません。新しいフィードにしか無い記事も、この既定では初回の一斉投稿になりません。バックログも投稿したいときは `markCurrentAsSeen: false` にします。
+`add_feed` と、`rssUrl` を変える `update_feed` は、保存前にその URL を取得して RSS/Atom として解釈できることを確認します。既定の `markCurrentAsSeen: true` では、その時点の記事を Discord に出さず 10 日間既読にします。既読は記事 URL のハッシュなので、フィードの URL を変えても、同じ記事 URL は再投稿しません。`markCurrentAsSeen: true` のときは、新しいフィード定義をカタログに出す前に、今ある記事のハッシュを KV へ書きます。そのあいだに Cron が走っても、既存記事は未読になりません。RSS として読めなかった場合は、Webhook もカタログも変えません。取得時のリダイレクトは最大 3 回まで自分で追い、飛び先も https で、localhost、`.local`、IP アドレス、認証情報を拒否します。新しいフィードにしか無い記事も、この既定では初回の一斉投稿になりません。バックログも投稿したいときは `markCurrentAsSeen: false` にします。
 
 カタログは 1 つの JSON を丸ごと上書きします。追加の RSS 取得中に別の追加・更新・削除が重なると、先に終わった変更が残らないことがあります。
 

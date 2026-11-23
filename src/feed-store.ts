@@ -219,16 +219,21 @@ export const removeWebhook = async (
 const assignWebhook = async (
   env: FeedWriteEnv,
   input: { webhookKey?: string; webhookUrl?: string; fallbackName: string },
-): Promise<{ ok: true; key: string } | FeedMutationError> => {
+): Promise<
+  { ok: true; key: string; urlToStore?: string } | FeedMutationError
+> => {
   const url = input.webhookUrl?.trim() ?? "";
   const key = input.webhookKey?.trim() ?? "";
   if (url.length > 0) {
     const name = key.length > 0 ? key : input.fallbackName;
-    const saved = await setWebhook(env, name, url);
-    if (!saved.ok) {
-      return saved;
+    if (!WEBHOOK_KEY.test(name)) {
+      return { ok: false, message: "Webhook の名前は英数字、_、- だけです。" };
     }
-    return { ok: true, key: saved.webhook.name };
+    const checked = validateWebhookUrl(url);
+    if (!checked.ok) {
+      return { ok: false, message: checked.message };
+    }
+    return { ok: true, key: name, urlToStore: checked.url };
   }
   if (key.length > 0) {
     if (!WEBHOOK_KEY.test(key)) {
@@ -243,6 +248,16 @@ const assignWebhook = async (
     return { ok: true, key };
   }
   return { ok: false, message: "webhookKey か webhookUrl が必要です。" };
+};
+
+const storeWebhook = async (
+  env: FeedWriteEnv,
+  key: string,
+  url: string,
+): Promise<void> => {
+  const registry = await loadWebhookRegistry(env);
+  registry[key] = url;
+  await writeWebhookRegistry(env, registry);
 };
 
 const asStoredFeed = (value: unknown): StoredFeed | null => {
@@ -447,6 +462,9 @@ export const addFeed = async (
   feeds.push(feed);
   const marked =
     (input.markCurrentAsSeen ?? true) ? await markSeen(env, loaded.items) : 0;
+  if (webhook.urlToStore) {
+    await storeWebhook(env, webhook.key, webhook.urlToStore);
+  }
   await writeCatalog(env, feeds);
   return { ok: true, feed: toPublicFeed(feed), marked };
 };
@@ -485,6 +503,7 @@ export const updateFeed = async (
     postTitle = normalized;
   }
   let webhookKey = current.webhookKey;
+  let urlToStore: string | undefined;
   if (input.webhookUrl !== undefined || input.webhookKey !== undefined) {
     const webhook = await assignWebhook(env, {
       webhookKey: input.webhookKey,
@@ -495,6 +514,7 @@ export const updateFeed = async (
       return webhook;
     }
     webhookKey = webhook.key;
+    urlToStore = webhook.urlToStore;
   }
   let rssUrl = current.rssUrl;
   let loadedItems: Array<{ title: string; link: string; linkHash: string }> =
@@ -523,6 +543,9 @@ export const updateFeed = async (
   feeds[index] = next;
   const shouldMark = urlChanged && (input.markCurrentAsSeen ?? true);
   const marked = shouldMark ? await markSeen(env, loadedItems) : 0;
+  if (urlToStore) {
+    await storeWebhook(env, webhookKey, urlToStore);
+  }
   await writeCatalog(env, feeds);
   return { ok: true, feed: toPublicFeed(next), marked };
 };

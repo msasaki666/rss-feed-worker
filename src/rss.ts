@@ -1,5 +1,6 @@
 import { type Feed, parseFeed } from "htmlparser2";
 import pRetry, { AbortError } from "p-retry";
+import { validateFeedUrl } from "./feed-url";
 
 export interface ExtractedItem {
   id: string | undefined;
@@ -8,13 +9,31 @@ export interface ExtractedItem {
   linkHash: string;
 }
 
+const MAX_REDIRECTS = 3;
+
 export const fetchFeed = async (url: string): Promise<Response> => {
   const request = async () => {
-    const res = await fetch(url);
-    if (res.status === 404) {
-      throw new AbortError(res.statusText);
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const checked = validateFeedUrl(current);
+      if (!checked.ok) {
+        throw new AbortError(checked.message);
+      }
+      const res = await fetch(checked.url, { redirect: "manual" });
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("location");
+        if (!location || hop === MAX_REDIRECTS) {
+          throw new AbortError("リダイレクトを追跡できません。");
+        }
+        current = new URL(location, checked.url).toString();
+        continue;
+      }
+      if (res.status === 404) {
+        throw new AbortError(res.statusText);
+      }
+      return res;
     }
-    return res;
+    throw new AbortError("リダイレクトを追跡できません。");
   };
   return pRetry(request, { retries: 3 });
 };

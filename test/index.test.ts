@@ -253,4 +253,58 @@ describe("processFeed", () => {
     expect(destinations).toContain("https://discord.example/science");
     vi.restoreAllMocks();
   });
+
+  it("does not schedule a disabled feed", async () => {
+    const bucket = memoryKv();
+    const env = {
+      RSS_FEED_WORKER_KV: bucket.kv,
+      DISCORD_WEBHOOK_URL_IT: "https://discord.example/it",
+      DISCORD_WEBHOOK_URL_SCIENCE: "https://discord.example/science",
+      DISCORD_WEBHOOK_URL_NOTEBOOKLM: "",
+    } as unknown as Env;
+    const { updateFeed } = await import("../src/feed-store");
+    await updateFeed(env, { id: "wired-japan", enabled: false });
+    const urls: string[] = [];
+    vi.spyOn(rss, "fetchFeed").mockImplementation(async (url: string) => {
+      urls.push(url);
+      return new Response("ok", { status: 200 });
+    });
+    vi.spyOn(rss, "parseFeedSafely").mockReturnValue({} as Feed);
+    vi.spyOn(rss, "extractItems").mockResolvedValue([
+      {
+        title: "Scheduled",
+        link: "https://example.com/scheduled",
+        linkHash: "hash-scheduled-disabled",
+        id: undefined,
+      },
+    ]);
+    const destinations: string[] = [];
+    vi.spyOn(discord, "sendDiscordWebhook").mockImplementation(
+      async (url: string) => {
+        destinations.push(url);
+        return new Response(null, { status: 200 });
+      },
+    );
+    const worker = (await import("../src/index")).default;
+    if (!worker.scheduled) {
+      throw new Error("scheduled handler is missing");
+    }
+    await worker.scheduled(
+      {
+        cron: "0 23 * * *",
+        scheduledTime: Date.now(),
+        noRetry: () => {},
+      } as ScheduledController,
+      env,
+      {
+        waitUntil: () => {},
+        passThroughOnException: () => {},
+      } as unknown as ExecutionContext,
+    );
+    expect(urls).toContain("https://b.hatena.ne.jp/hotentry/it.rss");
+    expect(urls).not.toContain("https://wired.jp/feed/rss");
+    expect(destinations).toContain("https://discord.example/it");
+    expect(destinations).not.toContain("https://discord.example/science");
+    vi.restoreAllMocks();
+  });
 });
